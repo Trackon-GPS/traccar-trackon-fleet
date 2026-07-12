@@ -38,6 +38,37 @@ public class Jt808ProtocolEncoderTest extends ProtocolTest {
     }
 
     @Test
+    public void testEncodeVideoPlayback() throws Exception {
+
+        var decoder = inject(new Jt808ProtocolDecoder(null));
+        var encoder = inject(new Jt808ProtocolEncoder(null));
+
+        Command command = new Command();
+        command.setDeviceId(1);
+
+        command.setType(Command.TYPE_VIDEO_PAUSE);
+        command.set(Command.KEY_INDEX, 1);
+        verifyFrame(
+            binary("7e910200040b3a73ce2ff2000001020000c57e"),
+            encodeCommand(encoder, decoder, command));
+
+        command.setType(Command.TYPE_VIDEO_RESUME);
+        command.set(Command.KEY_INDEX, 1);
+        verifyFrame(
+            binary("7e910200040b3a73ce2ff2000001030000c47e"),
+            encodeCommand(encoder, decoder, command));
+
+        command.setType(Command.TYPE_VIDEO_RESOURCES);
+        command.set(Command.KEY_INDEX, 1);
+        command.set(Command.KEY_START_TIME, "2025-01-23T02:15:12Z");
+        command.set(Command.KEY_END_TIME, "2025-01-23T02:18:12Z");
+        verifyFrame(
+            binary("7e920500180b3a73ce2ff20000012501231015122501231018120000000000000000020000d07e"),
+            encodeCommand(encoder, decoder, command));
+
+    }
+
+    @Test
     public void testEncodeJimiCustom() throws Exception {
 
         var decoder = inject(new Jt808ProtocolDecoder(null));

@@ -31,9 +31,12 @@ import java.net.URI;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.Set;
+import java.util.TimeZone;
 
 public class Jt808ProtocolEncoder extends BaseProtocolEncoder {
 
@@ -149,12 +152,72 @@ public class Jt808ProtocolEncoder extends BaseProtocolEncoder {
                     data.writeByte(0); // main stream
                     return decoder.formatMessage(
                             Jt808ProtocolDecoder.MSG_VIDEO_CONTROL, id, false, data);
+                case Command.TYPE_VIDEO_PAUSE:
+                    data.writeByte(command.getInteger(Command.KEY_INDEX, 1));
+                    data.writeByte(2); // pause all streams on this channel
+                    data.writeByte(0);
+                    data.writeByte(0);
+                    return decoder.formatMessage(
+                            Jt808ProtocolDecoder.MSG_VIDEO_CONTROL, id, false, data);
+                case Command.TYPE_VIDEO_RESUME:
+                    data.writeByte(command.getInteger(Command.KEY_INDEX, 1));
+                    data.writeByte(3); // resume stream transmission
+                    data.writeByte(0);
+                    data.writeByte(0);
+                    return decoder.formatMessage(
+                            Jt808ProtocolDecoder.MSG_VIDEO_CONTROL, id, false, data);
+                case Command.TYPE_VIDEO_PLAYBACK:
+                    var playbackConfig = getCacheManager().getConfig();
+                    String playbackHost = URI.create(playbackConfig.getString(Keys.WEB_URL)).getHost();
+                    int playbackPort = playbackConfig.getInteger(
+                            Keys.PROTOCOL_PORT.withPrefix(BaseProtocol.nameFromClass(Jt1078Protocol.class)));
+                    data.writeByte(playbackHost.length());
+                    data.writeCharSequence(playbackHost, StandardCharsets.US_ASCII);
+                    data.writeShort(playbackPort); // tcp port
+                    data.writeShort(0); // udp port
+                    data.writeByte(command.getInteger(Command.KEY_INDEX, 1)); // logical channel
+                    data.writeByte(2); // video only
+                    data.writeByte(0); // main or sub stream
+                    data.writeByte(0); // primary or backup memory
+                    data.writeByte(command.getInteger(Command.KEY_PLAYBACK_MODE, 0)); // 0: normal, 1: fast forward
+                    data.writeByte(command.getInteger(Command.KEY_PLAYBACK_SPEED, 0)); // valid for fast forward/rewind
+                    writeBcdTime(data, command.getDeviceId(), command.getString(Command.KEY_START_TIME));
+                    writeBcdTime(data, command.getDeviceId(), command.getString(Command.KEY_END_TIME));
+                    return decoder.formatMessage(
+                            Jt808ProtocolDecoder.MSG_VIDEO_PLAYBACK, id, false, data);
+                case Command.TYPE_VIDEO_RESOURCES:
+                    data.writeByte(command.getInteger(Command.KEY_INDEX, 0)); // logical channel, 0: all channels
+                    writeBcdTime(data, command.getDeviceId(), command.getString(Command.KEY_START_TIME));
+                    writeBcdTime(data, command.getDeviceId(), command.getString(Command.KEY_END_TIME));
+                    data.writeLong(0); // alarm flag (64 bits), 0: no alarm type
+                    data.writeByte(2); // video
+                    data.writeByte(0); // all streams
+                    data.writeByte(0); // all memory
+                    return decoder.formatMessage(
+                            Jt808ProtocolDecoder.MSG_VIDEO_QUERY, id, false, data);
                 default:
                     return null;
             }
         } finally {
             id.release();
         }
+    }
+
+    private void writeBcdTime(ByteBuf data, long deviceId, String time) {
+        if (time == null || time.isEmpty()) {
+            data.writeZero(6); // all zeros indicates the time is not set / playback continues indefinitely
+            return;
+        }
+        String zoneName = AttributeUtil.lookup(getCacheManager(), Keys.DECODER_TIMEZONE, deviceId);
+        ZoneId zone = TimeZone.getTimeZone(zoneName != null ? zoneName : "GMT+8").toZoneId();
+        Instant instant;
+        try {
+            instant = Instant.parse(time);
+        } catch (DateTimeParseException e) {
+            instant = OffsetDateTime.parse(time).toInstant();
+        }
+        data.writeBytes(DataConverter.parseHex(
+                DateTimeFormatter.ofPattern("yyMMddHHmmss").withZone(zone).format(instant)));
     }
 
 }

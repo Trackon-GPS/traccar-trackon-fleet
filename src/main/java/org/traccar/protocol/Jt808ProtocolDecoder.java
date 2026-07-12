@@ -94,6 +94,9 @@ public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
     public static final int MSG_DRIVER_IDENTITY = 0x0702;
     public static final int MSG_VIDEO_REQUEST = 0x9101;
     public static final int MSG_VIDEO_CONTROL = 0x9102;
+    public static final int MSG_VIDEO_PLAYBACK = 0x9201;
+    public static final int MSG_VIDEO_QUERY = 0x9205;
+    public static final int MSG_VIDEO_RESOURCE_LIST = 0x1205;
 
     public static final int RESULT_SUCCESS = 0;
 
@@ -357,6 +360,11 @@ public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
             index = buf.readUnsignedShort();
         }
 
+        if (BitUtil.check(attribute, 13)) {
+            buf.readUnsignedShort(); // total subpackages
+            buf.readUnsignedShort(); // subpackage index
+        }
+
         String uniqueId = decodeId(id);
         String strippedId = StringUtil.stripLeading('0', uniqueId);
         DeviceSession deviceSession = uniqueId.equals(strippedId)
@@ -565,9 +573,51 @@ public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
 
             return position;
 
+        } else if (type == MSG_VIDEO_RESOURCE_LIST) {
+
+            sendGeneralResponse(channel, remoteAddress, id, type, index);
+
+            return decodeVideoResources(deviceSession, buf);
+
         }
 
         return null;
+    }
+
+    private Position decodeVideoResources(DeviceSession deviceSession, ByteBuf buf) {
+
+        Position position = new Position(getProtocolName());
+        position.setDeviceId(deviceSession.getDeviceId());
+
+        getLastLocation(position, null);
+
+        buf.readUnsignedShort(); // query serial number
+        long count = buf.readUnsignedInt();
+        TimeZone timeZone = deviceSession.get(DeviceSession.KEY_TIMEZONE);
+
+        StringBuilder json = new StringBuilder("[");
+        for (long i = 0; i < count && buf.readableBytes() >= 28; i++) {
+            if (i > 0) {
+                json.append(',');
+            }
+            int channel = buf.readUnsignedByte();
+            Date start = readDate(buf, timeZone);
+            Date end = readDate(buf, timeZone);
+            buf.skipBytes(8); // alarm flag
+            int mediaType = buf.readUnsignedByte();
+            int streamType = buf.readUnsignedByte();
+            int memoryType = buf.readUnsignedByte();
+            long size = buf.readUnsignedInt();
+            json.append(String.format(
+                    "{\"channel\":%d,\"startTime\":\"%s\",\"endTime\":\"%s\","
+                            + "\"mediaType\":%d,\"streamType\":%d,\"memoryType\":%d,\"size\":%d}",
+                    channel, start.toInstant(), end.toInstant(), mediaType, streamType, memoryType, size));
+        }
+        json.append(']');
+
+        position.set("videoResources", json.toString());
+
+        return position;
     }
 
     private Position decodeResult(Channel channel, SocketAddress remoteAddress, String sentence) {

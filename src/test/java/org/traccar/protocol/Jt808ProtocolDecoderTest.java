@@ -12,6 +12,12 @@ public class Jt808ProtocolDecoderTest extends ProtocolTest {
         var decoder = inject(new Jt808ProtocolDecoder(null));
 
         verifyAttribute(decoder, binary(
+                "7e120500220b3a73ce2ff20000000100000001012501231015122501231018120000000000000000020101000000d8007e"),
+                "videoResources",
+                "[{\"channel\":1,\"startTime\":\"2025-01-23T02:15:12Z\",\"endTime\":\"2025-01-23T02:18:12Z\","
+                        + "\"mediaType\":2,\"streamType\":1,\"memoryType\":1,\"size\":216}]");
+
+        verifyAttribute(decoder, binary(
                 "7e0200006300000000000008f50000000000000000000000000000000000c7000000cc260615100115010400000001300114310108eb39000c00b20000000000000000000000060089fffffffe000600c5ffffffef0006002d00002db4001100d5303030303030303030303030303030c87e"),
                 Position.KEY_POWER, 11.7);
 
