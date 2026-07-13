@@ -63,7 +63,7 @@ public class Jt808ProtocolEncoderTest extends ProtocolTest {
         command.set(Command.KEY_START_TIME, "2025-01-23T02:15:12Z");
         command.set(Command.KEY_END_TIME, "2025-01-23T02:18:12Z");
         verifyFrame(
-            binary("7e920500180b3a73ce2ff20000012501231015122501231018120000000000000000020000d07e"),
+            binary("7e920500180b3a73ce2ff20000012501231015122501231018120000000000000000000000d27e"),
             encodeCommand(encoder, decoder, command));
 
     }

@@ -190,7 +190,7 @@ public class Jt808ProtocolEncoder extends BaseProtocolEncoder {
                     writeBcdTime(data, command.getDeviceId(), command.getString(Command.KEY_START_TIME));
                     writeBcdTime(data, command.getDeviceId(), command.getString(Command.KEY_END_TIME));
                     data.writeLong(0); // alarm flag (64 bits), 0: no alarm type
-                    data.writeByte(2); // video
+                    data.writeByte(0); // audio and video (matches how recordings are stored)
                     data.writeByte(0); // all streams
                     data.writeByte(0); // all memory
                     return decoder.formatMessage(

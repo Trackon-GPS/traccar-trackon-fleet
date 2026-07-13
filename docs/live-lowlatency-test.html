@@ -3,14 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>JC181 Low-Latency Live Test</title>
+<title>JC181 Video Test</title>
 <style>
-  :root { --bg:#0f1720; --card:#17212b; --line:#26333f; --fg:#e6edf3; --mut:#8b98a5; --accent:#2f81f7; --ok:#2ea043; --err:#f85149; }
+  :root { --bg:#0f1720; --card:#17212b; --line:#26333f; --fg:#e6edf3; --mut:#8b98a5; --accent:#2f81f7; --ok:#2ea043; --err:#f85149; --seg:#2f81f7; }
   * { box-sizing:border-box; }
   body { margin:0; font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--fg); }
-  header { padding:14px 18px; background:var(--card); border-bottom:1px solid var(--line); font-weight:600; }
+  header { display:flex; align-items:center; gap:22px; padding:12px 18px; background:var(--card); border-bottom:1px solid var(--line); }
+  header .title { font-weight:600; }
+  .tabs { display:flex; gap:6px; }
+  .tab { padding:6px 16px; border:1px solid var(--line); border-radius:6px; background:#21313f; color:var(--fg); cursor:pointer; font:inherit; }
+  .tab.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+  [hidden] { display:none !important; }
   main { display:grid; grid-template-columns:340px 1fr; gap:16px; padding:16px; align-items:start; }
+  .content { display:flex; flex-direction:column; gap:16px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:16px; }
+  .content .card { margin-bottom:0; }
   .card h2 { margin:0 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--mut); }
   label { display:block; font-size:12px; color:var(--mut); margin:8px 0 3px; }
   input, select { width:100%; padding:8px; background:#0d1117; border:1px solid var(--line); border-radius:6px; color:var(--fg); }
@@ -22,8 +29,6 @@
   .btns { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
   .btns button { flex:1 1 auto; }
   .players { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-  .players > .card { margin-bottom:0; }
-  .logwin { grid-column:1 / -1; }
   .player h2 { display:flex; justify-content:space-between; align-items:center; }
   canvas { width:100%; background:#000; border-radius:8px; aspect-ratio:16/9; display:block; }
   .stats { display:flex; flex-wrap:wrap; gap:14px; margin-top:8px; font-size:12px; }
@@ -31,19 +36,36 @@
   .win-btns { display:flex; gap:6px; }
   .ckrow { display:flex; align-items:center; gap:8px; margin-top:10px; font-size:13px; color:var(--mut); }
   .ckrow input { width:auto; }
-  #log { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; background:#0d1117; border:1px solid var(--line); border-radius:8px; padding:10px; height:200px; overflow:auto; white-space:pre-wrap; }
+  #log { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; background:#0d1117; border:1px solid var(--line); border-radius:8px; padding:10px; height:180px; overflow:auto; white-space:pre-wrap; }
   .log-ok{color:var(--ok);} .log-err{color:var(--err);} .log-mut{color:var(--mut);}
   .muted { color:var(--mut); font-size:12px; }
+  /* timeline */
+  .tl-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .tl-time { font-family:ui-monospace,Menlo,monospace; font-size:22px; font-weight:600; }
+  .tl-track { position:relative; height:48px; background:#0d1117; border:1px solid var(--line); border-radius:6px; overflow:hidden; cursor:crosshair; user-select:none; }
+  .tl-seg { position:absolute; top:7px; bottom:7px; background:linear-gradient(180deg,#4c9bff,#1f5fbf); border-radius:2px; }
+  .tl-tick { position:absolute; top:0; bottom:0; width:1px; background:rgba(255,255,255,.07); }
+  .tl-playhead { position:absolute; top:-2px; bottom:-2px; width:2px; background:var(--err); }
+  .tl-playhead::before { content:''; position:absolute; top:-1px; left:-5px; border:6px solid transparent; border-top-color:var(--err); }
+  .tl-labels { display:flex; justify-content:space-between; font-size:11px; color:var(--mut); margin-top:5px; }
+  .legend { display:flex; gap:18px; font-size:12px; color:var(--mut); margin-top:10px; }
+  .legend .sw { display:inline-block; width:12px; height:12px; border-radius:2px; vertical-align:-2px; margin-right:6px; }
+  .row2 { display:flex; gap:8px; } .row2 > * { flex:1; }
 </style>
 </head>
 <body>
-<header>JC181 — Low-Latency Live · Dual Channel (WebSocket + WebCodecs)</header>
+<header>
+  <span class="title">JC181 Video Test</span>
+  <div class="tabs">
+    <button class="tab active" data-tab="live">● Live</button>
+    <button class="tab" data-tab="playback">◷ Playback</button>
+  </div>
+</header>
 <main>
   <div>
     <div class="card">
-      <h2>1 · Connection</h2>
-      <label>Server URL</label>
-      <input id="server" value="https://fleetvts.trackongps.com">
+      <h2>Connection</h2>
+      <label>Server URL</label><input id="server" value="https://fleetvts.trackongps.com">
       <label>Email</label><input id="email" autocomplete="username">
       <label>Password</label><input id="password" type="password" autocomplete="current-password">
       <div class="ckrow"><input type="checkbox" id="remember"><label for="remember" style="margin:0">Save email &amp; password on this device</label></div>
@@ -51,44 +73,97 @@
       <div class="muted" id="connInfo" style="margin-top:8px"></div>
     </div>
     <div class="card">
-      <h2>2 · Device</h2>
-      <label>Device</label><select id="device"><option value="">— connect first —</option></select>
+      <h2>Device</h2>
+      <label>Device (camera=true)</label><select id="device"><option value="">— connect first —</option></select>
       <label>Stream</label><select id="streamType"><option value="0">Main</option><option value="1">Sub (lower latency)</option></select>
+    </div>
+
+    <!-- LIVE controls -->
+    <div class="card pane-live">
+      <h2>Live</h2>
       <label>Jitter buffer (ms) — higher = smoother, more delay</label><input id="buffer" type="number" value="150" min="0" step="30">
       <div class="btns">
         <button class="primary" id="startAll">▶ Start both</button>
         <button class="stop" id="stopAll">■ Stop both</button>
       </div>
     </div>
-  </div>
-  <div>
-    <div class="players">
-      <div class="card player">
-        <h2>Channel 1 (road)
-          <span class="win-btns"><button class="sm primary" data-startch="1">Start</button><button class="sm stop" data-stopch="1">Stop</button></span>
-        </h2>
-        <canvas id="cv1" width="1280" height="720"></canvas>
-        <div class="stats"><div>Codec <b id="codec1">—</b></div><div>FPS <b id="fps1">0</b></div><div>Buf <b id="lat1">—</b></div><div>Res <b id="res1">—</b></div></div>
+
+    <!-- PLAYBACK controls -->
+    <div class="card pane-playback" hidden>
+      <h2>Playback</h2>
+      <label>Date</label><input id="pbDate" type="date">
+      <div class="btns"><button class="primary" id="pbQuery">Query recordings</button></div>
+      <label style="margin-top:12px">Speed</label>
+      <select id="pbSpeed"><option value="1">1x</option><option value="2">2x</option><option value="4">4x</option><option value="8">8x</option></select>
+      <div class="btns">
+        <button class="primary" id="pbPlay">▶ Play</button>
+        <button id="pbPause">⏸ Pause</button>
+        <button class="stop" id="pbStop">■ Stop</button>
       </div>
-      <div class="card player">
-        <h2>Channel 2 (cabin)
-          <span class="win-btns"><button class="sm primary" data-startch="2">Start</button><button class="sm stop" data-stopch="2">Stop</button></span>
-        </h2>
-        <canvas id="cv2" width="1280" height="720"></canvas>
-        <div class="stats"><div>Codec <b id="codec2">—</b></div><div>FPS <b id="fps2">0</b></div><div>Buf <b id="lat2">—</b></div><div>Res <b id="res2">—</b></div></div>
-      </div>
-      <div class="card logwin"><h2>Log</h2><div id="log"></div></div>
+      <div class="muted" style="margin-top:10px">UI preview — recordings shown are mock data until wired to the device.</div>
     </div>
+  </div>
+
+  <div class="content">
+    <!-- LIVE view -->
+    <div class="pane-live">
+      <div class="players">
+        <div class="card player">
+          <h2>Channel 1 (road) <span class="win-btns"><button class="sm primary" data-startch="1">Start</button><button class="sm stop" data-stopch="1">Stop</button></span></h2>
+          <canvas id="cv1" width="1280" height="720"></canvas>
+          <div class="stats"><div>Codec <b id="codec1">—</b></div><div>FPS <b id="fps1">0</b></div><div>Buf <b id="lat1">—</b></div><div>Res <b id="res1">—</b></div></div>
+        </div>
+        <div class="card player">
+          <h2>Channel 2 (cabin) <span class="win-btns"><button class="sm primary" data-startch="2">Start</button><button class="sm stop" data-stopch="2">Stop</button></span></h2>
+          <canvas id="cv2" width="1280" height="720"></canvas>
+          <div class="stats"><div>Codec <b id="codec2">—</b></div><div>FPS <b id="fps2">0</b></div><div>Buf <b id="lat2">—</b></div><div>Res <b id="res2">—</b></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PLAYBACK view -->
+    <div class="pane-playback" hidden>
+      <div class="players">
+        <div class="card player"><h2>Channel 1 (road)</h2><canvas id="pcv1" width="1280" height="720"></canvas>
+          <div class="stats"><div>FPS <b id="pfps1">0</b></div><div>Buf <b id="pbuf1">—</b></div><div>Res <b id="pres1">—</b></div></div>
+        </div>
+        <div class="card player"><h2>Channel 2 (cabin)</h2><canvas id="pcv2" width="1280" height="720"></canvas>
+          <div class="stats"><div>FPS <b id="pfps2">0</b></div><div>Buf <b id="pbuf2">—</b></div><div>Res <b id="pres2">—</b></div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="tl-head">
+          <h2 style="margin:0">Timeline</h2>
+          <div class="tl-time" id="pbTime">--:--</div>
+        </div>
+        <div class="tl-track" id="tlTrack"></div>
+        <div class="tl-labels" id="tlLabels"></div>
+        <div class="legend">
+          <span><span class="sw" style="background:linear-gradient(180deg,#4c9bff,#1f5fbf)"></span>Recorded video</span>
+          <span><span class="sw" style="background:#0d1117;border:1px solid var(--line)"></span>No video</span>
+          <span><span class="sw" style="background:var(--err)"></span>Playhead</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card"><h2>Log</h2><div id="log"></div></div>
   </div>
 </main>
 <script>
 const $ = s => document.querySelector(s);
-const S = { base:'', auth:'', token:'', players:{} };
+const S = { base:'', auth:'', token:'' };
+const live = {};   // channel -> player
+const pb = {};     // channel -> player
 
 function log(m, c='') { const e=$('#log'); e.innerHTML += `<span class="log-${c||'mut'}">[${new Date().toLocaleTimeString()}] ${m}</span>\n`; e.scrollTop=e.scrollHeight; }
 function api(path, opts={}) {
   const headers = Object.assign({ 'Authorization': S.auth }, opts.headers||{});
   return fetch(S.base + path, Object.assign({ credentials:'omit' }, opts, { headers }));
+}
+function sendCmd(type, ch, extra) {
+  const deviceId = Number($('#device').value);
+  return api('/api/commands/send', { method:'POST', headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify({ deviceId, type, attributes: Object.assign({ index:ch }, extra||{}) }) });
 }
 
 async function connect() {
@@ -113,22 +188,14 @@ async function connect() {
 
 function saveCreds() {
   try {
-    if ($('#remember').checked) {
-      localStorage.setItem('jc181creds', JSON.stringify({ server:$('#server').value, email:$('#email').value, password:$('#password').value }));
-    } else {
-      localStorage.removeItem('jc181creds');
-    }
+    if ($('#remember').checked) localStorage.setItem('jc181creds', JSON.stringify({ server:$('#server').value, email:$('#email').value, password:$('#password').value }));
+    else localStorage.removeItem('jc181creds');
   } catch (e) {}
 }
 function loadCreds() {
   try {
     const c = JSON.parse(localStorage.getItem('jc181creds') || 'null');
-    if (c) {
-      if (c.server) $('#server').value = c.server;
-      $('#email').value = c.email || '';
-      $('#password').value = c.password || '';
-      $('#remember').checked = true;
-    }
+    if (c) { if (c.server) $('#server').value = c.server; $('#email').value = c.email || ''; $('#password').value = c.password || ''; $('#remember').checked = true; }
   } catch (e) {}
 }
 
@@ -151,68 +218,51 @@ function h264Codec(data, sps) {
   return 'avc1.' + [p,c,l].map(x=>x.toString(16).padStart(2,'0')).join('');
 }
 
-function makePlayer(ch) {
-  const p = { ch, ws:null, decoder:null, configured:false, frames:0, lastFpsT:0,
-    queue:[], basePts:null, baseWall:0, raf:null, target:120,
-    canvas:$('#cv'+ch), codec:$('#codec'+ch), fps:$('#fps'+ch), lat:$('#lat'+ch), res:$('#res'+ch) };
-  p.ctx = p.canvas.getContext('2d');
-  return p;
+// ---- generic player (shared by live + playback) ----
+function makePlayer(canvas, els, target) {
+  return { ws:null, decoder:null, configured:false, frames:0, lastFpsT:0,
+    queue:[], basePts:null, baseWall:0, raf:null, target:target||120,
+    canvas, ctx:canvas.getContext('2d'),
+    elCodec:els.codec||null, elFps:els.fps||null, elLat:els.lat||null, elRes:els.res||null, label:els.label };
 }
-
 function drawFrame(p, frame) {
-  if (p.canvas.width !== frame.displayWidth) { p.canvas.width = frame.displayWidth; p.canvas.height = frame.displayHeight; p.res.textContent = frame.displayWidth+'×'+frame.displayHeight; }
+  if (p.canvas.width !== frame.displayWidth) { p.canvas.width = frame.displayWidth; p.canvas.height = frame.displayHeight; if (p.elRes) p.elRes.textContent = frame.displayWidth+'×'+frame.displayHeight; }
   p.ctx.drawImage(frame, 0, 0, p.canvas.width, p.canvas.height);
   p.frames++;
   const now = performance.now();
-  if (now - p.lastFpsT >= 1000) { p.fps.textContent = p.frames; p.frames = 0; p.lastFpsT = now; }
+  if (now - p.lastFpsT >= 1000) { if (p.elFps) p.elFps.textContent = p.frames; p.frames = 0; p.lastFpsT = now; }
 }
-
-// Paced renderer: draw frames on the display refresh, timed by their own PTS, with a
-// small jitter buffer to absorb bursty network delivery -> smooth playback.
 function renderLoop(p) {
   p.raf = requestAnimationFrame(() => renderLoop(p));
   const now = performance.now();
-  if (p.basePts === null) {
-    if (!p.queue.length) return;
-    p.basePts = p.queue[0].pts;
-    p.baseWall = now + p.target;   // present the first buffered frame after `target` ms
-  }
+  if (p.basePts === null) { if (!p.queue.length) return; p.basePts = p.queue[0].pts; p.baseWall = now + p.target; }
   let draw = null;
   while (p.queue.length) {
-    const displayAt = p.baseWall + (p.queue[0].pts - p.basePts) / 1000; // pts is microseconds
-    if (displayAt <= now) { if (draw) draw.frame.close(); draw = p.queue.shift(); }
-    else break;
+    const displayAt = p.baseWall + (p.queue[0].pts - p.basePts) / 1000;
+    if (displayAt <= now) { if (draw) draw.frame.close(); draw = p.queue.shift(); } else break;
   }
   if (draw) { drawFrame(p, draw.frame); draw.frame.close(); }
-  p.lat.textContent = p.queue.length + 'f';
-  // if we drifted far behind live (deep backlog), drop to catch up and re-anchor
+  if (p.elLat) p.elLat.textContent = p.queue.length + 'f';
   if (p.queue.length > 45) { while (p.queue.length > 12) p.queue.shift().frame.close(); p.basePts = null; }
 }
-
 function configureDecoder(p, codec) {
-  p.target = Math.max(0, Number($('#buffer').value) || 0);
   p.decoder = new VideoDecoder({
-    output: (frame) => {
-      p.queue.push({ frame, pts: frame.timestamp });
-      if (p.raf === null) renderLoop(p);
-    },
-    error: (e) => log(`CH${p.ch} decoder error: ` + e.message, 'err')
+    output: (frame) => { p.queue.push({ frame, pts: frame.timestamp }); if (p.raf === null) renderLoop(p); },
+    error: (e) => log(`${p.label} decoder error: ` + e.message, 'err')
   });
   p.decoder.configure({ codec, optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware' });
-  p.codec.textContent = codec;
-  log(`CH${p.ch} decoder: ` + codec + ` (buffer ${p.target}ms)`, 'ok');
+  if (p.elCodec) p.elCodec.textContent = codec;
+  log(`${p.label} decoder: ` + codec + ` (buffer ${p.target}ms)`, 'ok');
 }
-
-function openSocket(p) {
-  const deviceId = Number($('#device').value);
+function openSocket(p, deviceId, channel) {
   const wsBase = S.base.replace(/^http/, 'ws');
-  const url = `${wsBase}/api/stream/video?deviceId=${deviceId}&channel=${p.ch}&token=${encodeURIComponent(S.token)}`;
+  const url = `${wsBase}/api/stream/video?deviceId=${deviceId}&channel=${channel}&token=${encodeURIComponent(S.token)}`;
   p.configured = false;
   const ws = new WebSocket(url); ws.binaryType = 'arraybuffer'; p.ws = ws;
-  log(`CH${p.ch} opening socket…`);
-  ws.onopen = () => log(`CH${p.ch} socket open; waiting for frames…`, 'ok');
-  ws.onclose = () => log(`CH${p.ch} socket closed.`);
-  ws.onerror = () => log(`CH${p.ch} socket error (endpoint 404 / token / permission?).`, 'err');
+  log(`${p.label} opening socket…`);
+  ws.onopen = () => log(`${p.label} socket open; waiting for frames…`, 'ok');
+  ws.onclose = () => log(`${p.label} socket closed.`);
+  ws.onerror = () => log(`${p.label} socket error (endpoint 404 / token / permission?).`, 'err');
   ws.onmessage = (ev) => {
     const buf = new Uint8Array(ev.data);
     const payloadType = buf[0], keyFrame = buf[1] === 1;
@@ -229,49 +279,180 @@ function openSocket(p) {
         p.configured = true;
       }
       p.decoder.decode(new EncodedVideoChunk({ type: keyFrame ? 'key' : 'delta', timestamp: ts * 1000, data: nal }));
-    } catch (e) { log(`CH${p.ch} frame error: ` + e.message, 'err'); }
+    } catch (e) { log(`${p.label} frame error: ` + e.message, 'err'); }
   };
 }
+function stopPlayer(p) {
+  if (!p) return;
+  if (p.raf !== null) cancelAnimationFrame(p.raf);
+  p.queue.forEach(x => { try { x.frame.close(); } catch(e){} }); p.queue = [];
+  if (p.ws) { try { p.ws.close(); } catch(e){} }
+  if (p.decoder && p.decoder.state !== 'closed') { try { p.decoder.close(); } catch(e){} }
+}
+async function startStream(p, deviceId, channel, cmdType, extraAttrs) {
+  const body = { deviceId, type:cmdType, attributes: Object.assign({ index:channel }, extraAttrs||{}) };
+  log(`${p.label} → ${cmdType} ${JSON.stringify(body.attributes)}`);
+  try {
+    const r = await api('/api/commands/send', { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(body) });
+    log(`${p.label} ← HTTP ${r.status}${r.status===202?' (queued)':''}`, r.ok?'ok':'err');
+    if (r.ok) openSocket(p, deviceId, channel);
+    return r.status;
+  } catch (e) { log(`${p.label} command error: ` + e.message, 'err'); return 0; }
+}
 
-async function startChannel(ch) {
+// ---- LIVE ----
+function liveStart(ch) {
   if (!S.token) { log('Connect first.', 'err'); return; }
   const deviceId = Number($('#device').value);
   if (!deviceId) { log('Pick a device.', 'err'); return; }
-  stopChannel(ch, true); // reset any existing
-  const p = makePlayer(ch); S.players[ch] = p;
-  const body = { deviceId, type:'videoStart', attributes:{ index:ch, streamType:Number($('#streamType').value) } };
-  log(`CH${ch} → videoStart ${JSON.stringify(body.attributes)}`);
-  try {
-    const r = await api('/api/commands/send', { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(body) });
-    log(`CH${ch} ← HTTP ${r.status}${r.status===202?' (queued)':''}`, r.ok?'ok':'err');
-    if (r.ok) openSocket(p);
-  } catch (e) { log(`CH${ch} command error: ` + e.message, 'err'); }
+  if (live[ch]) stopPlayer(live[ch]);
+  const p = makePlayer($('#cv'+ch), { codec:$('#codec'+ch), fps:$('#fps'+ch), lat:$('#lat'+ch), res:$('#res'+ch), label:'CH'+ch },
+    Math.max(0, Number($('#buffer').value) || 0));
+  live[ch] = p;
+  startStream(p, deviceId, ch, 'videoStart', { streamType:Number($('#streamType').value) });
+}
+function liveStop(ch) {
+  if (live[ch]) { stopPlayer(live[ch]); delete live[ch]; }
+  sendCmd('videoStop', ch).catch(()=>{});
+  log(`CH${ch} stopped.`);
 }
 
-function stopChannel(ch, quiet) {
-  const p = S.players[ch];
-  if (p) {
-    if (p.raf !== null) cancelAnimationFrame(p.raf);
-    p.queue.forEach(x => { try { x.frame.close(); } catch(e){} });
-    p.queue = [];
-    if (p.ws) { try { p.ws.close(); } catch(e){} }
-    if (p.decoder && p.decoder.state !== 'closed') { try { p.decoder.close(); } catch(e){} }
-    delete S.players[ch];
-  }
-  if (!quiet) {
-    const deviceId = Number($('#device').value);
-    api('/api/commands/send', { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ deviceId, type:'videoStop', attributes:{ index:ch } }) }).catch(()=>{});
-    log(`CH${ch} stopped.`);
-  }
+// ---- PLAYBACK ----
+function localIso(dateStr, minutes) {
+  const [y,mo,d] = dateStr.split('-').map(Number);
+  return new Date(y, mo-1, d, Math.floor(minutes/60), Math.floor(minutes%60), Math.floor((minutes*60)%60)).toISOString();
+}
+function speedCodes() {
+  const mult = Number($('#pbSpeed').value);
+  if (mult <= 1) return { playbackMode:0, playbackSpeed:0, mult:1 };
+  return { playbackMode:1, playbackSpeed:{2:2,4:3,8:4}[mult]||2, mult };
+}
+function pbStartChannel(ch, startIso, endIso, sc) {
+  const deviceId = Number($('#device').value);
+  if (pb[ch]) stopPlayer(pb[ch]);
+  const p = makePlayer($('#pcv'+ch), { fps:$('#pfps'+ch), lat:$('#pbuf'+ch), res:$('#pres'+ch), label:'PB CH'+ch }, 200);
+  pb[ch] = p;
+  startStream(p, deviceId, ch, 'videoPlayback', { startTime:startIso, endTime:endIso, playbackMode:sc.playbackMode, playbackSpeed:sc.playbackSpeed });
+}
+function pbPlay() {
+  if (!S.token) { log('Connect first.', 'err'); return; }
+  const deviceId = Number($('#device').value);
+  if (!deviceId) { log('Pick a device.', 'err'); return; }
+  const date = $('#pbDate').value;
+  const min = playheadMinutes();
+  const startIso = localIso(date, min), endIso = localIso(date, 1440);
+  const sc = speedCodes();
+  log(`Playback from ${fmt(min)} on ${date} at ${sc.mult}x`);
+  pbStartChannel(1, startIso, endIso, sc);
+  pbStartChannel(2, startIso, endIso, sc);
+  pbAdvanceStart(min, sc.mult);
+}
+function pbPause() { [1,2].forEach(ch => sendCmd('videoPause', ch).catch(()=>{})); pbAdvanceStop(); log('Playback paused.'); }
+function pbResumeCmd() { [1,2].forEach(ch => sendCmd('videoResume', ch).catch(()=>{})); log('Playback resumed.'); }
+function pbStop() {
+  [1,2].forEach(ch => { if (pb[ch]) { stopPlayer(pb[ch]); delete pb[ch]; } sendCmd('videoStop', ch).catch(()=>{}); });
+  pbAdvanceStop();
+  log('Playback stopped.');
 }
 
+// ---- playhead auto-advance during playback ----
+let pbTimer=null, pbAnchorMin=0, pbAnchorWall=0, pbMult=1;
+function pbAdvanceStart(min, mult) { pbAdvanceStop(); pbAnchorMin=min; pbAnchorWall=performance.now(); pbMult=mult; pbTimer=setInterval(pbTick, 250); }
+function pbAdvanceStop() { if (pbTimer) { clearInterval(pbTimer); pbTimer=null; } }
+function pbTick() { const min = pbAnchorMin + (performance.now()-pbAnchorWall)*pbMult/60000; if (min>=1440) { pbStop(); return; } setPlayheadMinutes(min); }
+
+// ================= Tabs =================
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab===name));
+  document.querySelectorAll('.pane-live').forEach(e => e.hidden = name!=='live');
+  document.querySelectorAll('.pane-playback').forEach(e => e.hidden = name!=='playback');
+  if (name==='playback') renderTimeline();
+}
+
+// ================= Playback timeline =================
+let PB_SEGMENTS = [[372,468],[510,552],[726,833],[1042,1140]]; // mock until queried; minutes-of-day [start,end]
+const fmt = m => { m=Math.max(0,Math.min(1440,m)); const h=Math.floor(m/60), mm=Math.floor(m%60); return String(h).padStart(2,'0')+':'+String(mm).padStart(2,'0'); };
+
+function renderTimeline() {
+  const track = $('#tlTrack'); if (!track) return;
+  track.innerHTML = '';
+  PB_SEGMENTS.forEach(([s,e]) => { const d=document.createElement('div'); d.className='tl-seg'; d.style.left=(s/1440*100)+'%'; d.style.width=(Math.max(0.4,(e-s)/1440*100))+'%'; track.appendChild(d); });
+  for (let h=1; h<24; h++) { const t=document.createElement('div'); t.className='tl-tick'; t.style.left=(h/24*100)+'%'; track.appendChild(t); }
+  const ph=document.createElement('div'); ph.className='tl-playhead'; ph.id='tlPlayhead'; ph.style.left=(Number(track.dataset.pos||0))+'%'; track.appendChild(ph);
+  const lab=$('#tlLabels'); lab.innerHTML=''; for (let h=0; h<=24; h+=3) { const s=document.createElement('span'); s.textContent=String(h).padStart(2,'0'); lab.appendChild(s); }
+}
+function playheadMinutes() { return (Number($('#tlTrack').dataset.pos||0)/100)*1440; }
+function setPlayheadMinutes(min) {
+  const f = Math.max(0, Math.min(1, min/1440));
+  const track=$('#tlTrack'); track.dataset.pos=(f*100);
+  const ph=$('#tlPlayhead'); if (ph) ph.style.left=(f*100)+'%';
+  const inSeg = PB_SEGMENTS.some(([s,e]) => min>=s && min<=e);
+  const t=$('#pbTime'); t.textContent=fmt(min); t.style.color = inSeg ? 'var(--ok)' : 'var(--mut)';
+}
+function setPlayhead(clientX) {
+  const r=$('#tlTrack').getBoundingClientRect();
+  let f=(clientX-r.left)/r.width; f=Math.max(0,Math.min(1,f));
+  setPlayheadMinutes(f*1440);
+}
+let tlDrag=false;
+function initTimeline() {
+  const track=$('#tlTrack');
+  track.addEventListener('pointerdown', e => { pbAdvanceStop(); tlDrag=true; setPlayhead(e.clientX); });
+  window.addEventListener('pointermove', e => { if (tlDrag) setPlayhead(e.clientX); });
+  window.addEventListener('pointerup', () => { tlDrag=false; });
+}
+
+// ---- query recordings -> real timeline ----
+async function pbQuery() {
+  if (!S.token) { log('Connect first.', 'err'); return; }
+  const deviceId = Number($('#device').value);
+  if (!deviceId) { log('Pick a device.', 'err'); return; }
+  const date = $('#pbDate').value;
+  await sendCmd('videoResources', 0, { startTime:localIso(date,0), endTime:localIso(date,1440) });
+  log('Querying recordings… (waiting for camera reply)');
+  const deadline = Date.now() + 20000;
+  const poll = async () => {
+    try {
+      const r = await api('/api/positions?deviceId=' + deviceId);
+      if (r.ok) {
+        const ps = await r.json();
+        for (const p of ps) {
+          if (p.attributes && p.attributes.videoResources) {
+            applyResources(JSON.parse(p.attributes.videoResources), date);
+            return;
+          }
+        }
+      }
+    } catch (e) {}
+    if (Date.now() < deadline) setTimeout(poll, 2000);
+    else log('No recordings list within 20s (none in range, or timezone/attribute mismatch).', 'err');
+  };
+  setTimeout(poll, 2000);
+}
+function dateMinutes(iso) { const d = new Date(iso); return d.getHours()*60 + d.getMinutes() + d.getSeconds()/60; }
+function applyResources(list, date) {
+  let segs = list.filter(x => x.channel === 1);
+  if (!segs.length) segs = list;
+  PB_SEGMENTS = segs.map(x => [dateMinutes(x.startTime), dateMinutes(x.endTime)]).filter(([s,e]) => e >= s);
+  renderTimeline();
+  log(`Recordings received: ${PB_SEGMENTS.length} segment(s).`, 'ok');
+}
+
+// ================= wiring =================
 $('#connect').onclick = connect;
-$('#startAll').onclick = () => { startChannel(1); startChannel(2); };
-$('#stopAll').onclick = () => { stopChannel(1); stopChannel(2); };
-document.querySelectorAll('[data-startch]').forEach(b => b.onclick = () => startChannel(Number(b.dataset.startch)));
-document.querySelectorAll('[data-stopch]').forEach(b => b.onclick = () => stopChannel(Number(b.dataset.stopch)));
+$('#startAll').onclick = () => { liveStart(1); liveStart(2); };
+$('#stopAll').onclick = () => { liveStop(1); liveStop(2); };
+document.querySelectorAll('[data-startch]').forEach(b => b.onclick = () => liveStart(Number(b.dataset.startch)));
+document.querySelectorAll('[data-stopch]').forEach(b => b.onclick = () => liveStop(Number(b.dataset.stopch)));
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchTab(t.dataset.tab));
 $('#remember').onchange = saveCreds;
+$('#pbQuery').onclick = pbQuery;
+$('#pbPlay').onclick = pbPlay;
+$('#pbPause').onclick = pbPause;
+$('#pbStop').onclick = pbStop;
+$('#pbDate').valueAsDate = new Date();
 loadCreds();
+initTimeline();
 log('Ready. Desktop Chrome/Edge over http://localhost or https. Enter credentials and Connect.', 'mut');
 </script>
 </body>
