@@ -517,31 +517,35 @@ async function pbQuery() {   // "Load recordings"
     PB_EVENTS = events.filter(ev => !NOISE.has(ev.type)).map(ev => ({
       min: dateMinutes(ev.eventTime || ev.serverTime), label: eventLabel(ev), alarm: ev.type === 'alarm' }));
   } catch (e) { PB_EVENTS = []; }
-  // recorded spans from the camera (videoResources -> async reply on a position)
-  await sendCmd('videoResources', 0, { startTime: localIso(date, 0), endTime: localIso(date, 1440) });
-  log('Querying camera recordings for ' + date + '…');
-  const deadline = Date.now() + 20000;
-  const poll = async () => {
-    try {
-      const r = await api('/api/positions?deviceId=' + deviceId);
-      if (r.ok) {
-        for (const p of await r.json()) {
-          const vr = (p.attributes || {}).videoResources;
-          if (vr !== undefined) {
-            const list = JSON.parse(vr);
-            PB_ALL = list.map(x => ({ channel: x.channel, s: dateMinutes(x.startTime), e: dateMinutes(x.endTime) }))
-                         .filter(x => x.e >= x.s);
-            refilterTimeline();
-            log(`Camera recordings: ${list.length} clip(s) total; ${PB_SEGMENTS.length} on CH${$('#pbChannel').value}, ${PB_EVENTS.length} event(s).`, 'ok');
-            return;
-          }
-        }
-      }
-    } catch (e) {}
-    if (Date.now() < deadline) setTimeout(poll, 1500);
-    else log('No recording list (none for that day, or camera busy).', 'err');
+  // recorded spans from the camera: the videoResources reply is a transient position update,
+  // so catch it over the WebSocket (polling /api/positions misses it).
+  const wsBase = S.base.replace(/^http/, 'ws');
+  const sock = new WebSocket(`${wsBase}/api/socket?token=${encodeURIComponent(S.token)}`);
+  let done = false, ready = false;
+  const finish = (ok) => { if (done) return; done = true; try { sock.close(); } catch (e) {} if (!ok) log('No recording list (none for that day, or camera busy).', 'err'); };
+  sock.onopen = () => {
+    log('Querying camera recordings for ' + date + '…');
+    sendCmd('videoResources', 0, { startTime: localIso(date, 0), endTime: localIso(date, 1440) });
+    setTimeout(() => { ready = true; }, 600); // skip the initial latest-position dump
   };
-  setTimeout(poll, 1500);
+  sock.onmessage = (ev) => {
+    if (!ready || typeof ev.data !== 'string') return;
+    let data; try { data = JSON.parse(ev.data); } catch (e) { return; }
+    for (const p of (data.positions || [])) {
+      const vr = (p.attributes || {}).videoResources;
+      if (vr === undefined) continue;
+      try {
+        const list = JSON.parse(vr);
+        PB_ALL = list.map(x => ({ channel: x.channel, s: dateMinutes(x.startTime), e: dateMinutes(x.endTime) })).filter(x => x.e >= x.s);
+        refilterTimeline();
+        log(`Camera recordings: ${list.length} clip(s) total; ${PB_SEGMENTS.length} on CH${$('#pbChannel').value}, ${PB_EVENTS.length} event(s).`, 'ok');
+        finish(true);
+      } catch (e) {}
+      return;
+    }
+  };
+  sock.onerror = () => finish(false);
+  setTimeout(() => finish(false), 20000);
 }
 
 // ================= wiring =================
