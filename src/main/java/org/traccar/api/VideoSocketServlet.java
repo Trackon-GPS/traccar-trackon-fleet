@@ -26,6 +26,7 @@ import org.traccar.config.Keys;
 import org.traccar.helper.SessionHelper;
 import org.traccar.media.VideoStreamManager;
 import org.traccar.model.Device;
+import org.traccar.storage.Storage;
 
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -44,16 +45,16 @@ public class VideoSocketServlet extends JettyWebSocketServlet {
 
     private final Config config;
     private final LoginService loginService;
-    private final PermissionsService permissionsService;
+    private final Storage storage;
     private final VideoStreamManager streamManager;
 
     @Inject
     public VideoSocketServlet(
             Config config, LoginService loginService,
-            PermissionsService permissionsService, VideoStreamManager streamManager) {
+            Storage storage, VideoStreamManager streamManager) {
         this.config = config;
         this.loginService = loginService;
-        this.permissionsService = permissionsService;
+        this.storage = storage;
         this.streamManager = streamManager;
     }
 
@@ -78,7 +79,7 @@ public class VideoSocketServlet extends JettyWebSocketServlet {
 
                 long deviceId = Long.parseLong(parameters.get("deviceId").get(0));
                 int channel = Integer.parseInt(parameters.get("channel").get(0));
-                permissionsService.checkPermission(Device.class, userId, deviceId);
+                new PermissionsService(storage).checkPermission(Device.class, userId, deviceId);
 
                 return new VideoSocket(streamManager, deviceId, channel);
             } catch (Exception e) {
