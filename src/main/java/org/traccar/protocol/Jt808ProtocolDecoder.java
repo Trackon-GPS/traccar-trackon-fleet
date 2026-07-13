@@ -591,8 +591,12 @@ public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
 
         getLastLocation(position, null);
 
+        // diagnostic: keep the raw reply so we can see exactly what the camera returns
+        position.set("videoResourcesRaw", ByteBufUtil.hexDump(buf, buf.readerIndex(), buf.readableBytes()));
+
         buf.readUnsignedShort(); // query serial number
         long count = buf.readUnsignedInt();
+        position.set("videoResourcesCount", count);
         TimeZone timeZone = deviceSession.get(DeviceSession.KEY_TIMEZONE);
 
         StringBuilder json = new StringBuilder("[");
