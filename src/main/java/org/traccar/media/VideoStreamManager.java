@@ -79,8 +79,11 @@ public class VideoStreamManager {
             return; // frame from a superseded connection (e.g. lingering playback) — drop it
         }
 
-        DeviceStream stream = streams.computeIfAbsent(deviceId + "_" + channel, k -> new DeviceStream());
-        stream.addFrame(nalData, timestamp, isKeyFrame, payloadType);
+        boolean video = payloadType == 98 || payloadType == 99; // H.264 / H.265
+        if (video) {
+            DeviceStream stream = streams.computeIfAbsent(deviceId + "_" + channel, k -> new DeviceStream());
+            stream.addFrame(nalData, timestamp, isKeyFrame, payloadType); // HLS muxer is video-only
+        }
 
         Set<FrameListener> listeners = subscribers.get(deviceId + "_" + channel);
         if (listeners != null) {

@@ -83,8 +83,8 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
 
         int bodyLength = buf.readUnsignedShort();
 
-        if (bodyLength == 0 || dataType > 2) {
-            return null;
+        if (bodyLength == 0 || dataType > 3) {
+            return null; // keep video (0-2) and audio (3); drop pass-through and empty frames
         }
 
         Device device = deviceLookupService.lookup(new String[]{uniqueId});

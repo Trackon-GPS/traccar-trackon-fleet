@@ -141,7 +141,7 @@ public class Jt808ProtocolEncoder extends BaseProtocolEncoder {
                     data.writeShort(port); // tcp port
                     data.writeShort(0); // udp port
                     data.writeByte(videoChannel);
-                    data.writeByte(1); // video only
+                    data.writeByte(0); // audio and video
                     data.writeByte(0); // main stream
                     return decoder.formatMessage(
                             Jt808ProtocolDecoder.MSG_VIDEO_REQUEST, id, false, data);
@@ -176,7 +176,7 @@ public class Jt808ProtocolEncoder extends BaseProtocolEncoder {
                     data.writeShort(playbackPort); // tcp port
                     data.writeShort(0); // udp port
                     data.writeByte(command.getInteger(Command.KEY_INDEX, 1)); // logical channel
-                    data.writeByte(2); // video only
+                    data.writeByte(0); // audio and video
                     data.writeByte(0); // main or sub stream
                     data.writeByte(0); // primary or backup memory
                     data.writeByte(command.getInteger(Command.KEY_PLAYBACK_MODE, 0)); // 0: normal, 1: fast forward
