@@ -9,7 +9,7 @@
   * { box-sizing:border-box; }
   body { margin:0; font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--fg); }
   header { padding:14px 18px; background:var(--card); border-bottom:1px solid var(--line); font-weight:600; }
-  main { display:grid; grid-template-columns:360px 1fr; gap:16px; padding:16px; align-items:start; }
+  main { display:grid; grid-template-columns:340px 1fr; gap:16px; padding:16px; align-items:start; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:16px; }
   .card h2 { margin:0 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--mut); }
   label { display:block; font-size:12px; color:var(--mut); margin:8px 0 3px; }
@@ -18,56 +18,72 @@
   button:hover { border-color:var(--accent); }
   button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   button.stop { background:#3a2226; border-color:#5c2b31; }
+  button.sm { padding:5px 10px; font-size:12px; }
   .btns { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
   .btns button { flex:1 1 auto; }
-  canvas { width:100%; background:#000; border-radius:10px; aspect-ratio:16/9; display:block; }
-  #log { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; background:#0d1117; border:1px solid var(--line); border-radius:8px; padding:10px; height:220px; overflow:auto; white-space:pre-wrap; }
-  .log-ok{color:var(--ok);} .log-err{color:var(--err);} .log-mut{color:var(--mut);}
-  .stats { display:flex; gap:18px; margin-top:8px; font-size:13px; }
+  .players { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .players > .card { margin-bottom:0; }
+  .logwin { grid-column:1 / -1; }
+  .player h2 { display:flex; justify-content:space-between; align-items:center; }
+  canvas { width:100%; background:#000; border-radius:8px; aspect-ratio:16/9; display:block; }
+  .stats { display:flex; flex-wrap:wrap; gap:14px; margin-top:8px; font-size:12px; }
   .stats b { color:var(--accent); }
+  .win-btns { display:flex; gap:6px; }
+  .ckrow { display:flex; align-items:center; gap:8px; margin-top:10px; font-size:13px; color:var(--mut); }
+  .ckrow input { width:auto; }
+  #log { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; background:#0d1117; border:1px solid var(--line); border-radius:8px; padding:10px; height:200px; overflow:auto; white-space:pre-wrap; }
+  .log-ok{color:var(--ok);} .log-err{color:var(--err);} .log-mut{color:var(--mut);}
   .muted { color:var(--mut); font-size:12px; }
 </style>
 </head>
 <body>
-<header>JC181 — Low-Latency Live (WebSocket + WebCodecs)</header>
+<header>JC181 — Low-Latency Live · Dual Channel (WebSocket + WebCodecs)</header>
 <main>
   <div>
     <div class="card">
       <h2>1 · Connection</h2>
       <label>Server URL</label>
-      <input id="server" value="https://lite.trackongps.com">
+      <input id="server" value="https://fleetvts.trackongps.com">
       <label>Email</label><input id="email" autocomplete="username">
       <label>Password</label><input id="password" type="password" autocomplete="current-password">
+      <div class="ckrow"><input type="checkbox" id="remember"><label for="remember" style="margin:0">Save email &amp; password on this device</label></div>
       <div class="btns"><button class="primary" id="connect">Connect</button></div>
       <div class="muted" id="connInfo" style="margin-top:8px"></div>
     </div>
     <div class="card">
-      <h2>2 · Device &amp; channel</h2>
+      <h2>2 · Device</h2>
       <label>Device</label><select id="device"><option value="">— connect first —</option></select>
-      <label>Channel</label><select id="channel"><option value="1">1 (road)</option><option value="2">2 (cabin)</option></select>
       <label>Stream</label><select id="streamType"><option value="0">Main</option><option value="1">Sub (lower latency)</option></select>
+      <label>Jitter buffer (ms) — higher = smoother, more delay</label><input id="buffer" type="number" value="150" min="0" step="30">
       <div class="btns">
-        <button class="primary" id="start">Start live</button>
-        <button class="stop" id="stop">Stop</button>
+        <button class="primary" id="startAll">▶ Start both</button>
+        <button class="stop" id="stopAll">■ Stop both</button>
       </div>
     </div>
   </div>
   <div>
-    <div class="card"><h2>Player</h2><canvas id="canvas" width="1280" height="720"></canvas>
-      <div class="stats">
-        <div>Codec: <b id="stCodec">—</b></div>
-        <div>FPS: <b id="stFps">0</b></div>
-        <div>Frame→paint: <b id="stLat">—</b></div>
-        <div>Res: <b id="stRes">—</b></div>
+    <div class="players">
+      <div class="card player">
+        <h2>Channel 1 (road)
+          <span class="win-btns"><button class="sm primary" data-startch="1">Start</button><button class="sm stop" data-stopch="1">Stop</button></span>
+        </h2>
+        <canvas id="cv1" width="1280" height="720"></canvas>
+        <div class="stats"><div>Codec <b id="codec1">—</b></div><div>FPS <b id="fps1">0</b></div><div>Buf <b id="lat1">—</b></div><div>Res <b id="res1">—</b></div></div>
       </div>
+      <div class="card player">
+        <h2>Channel 2 (cabin)
+          <span class="win-btns"><button class="sm primary" data-startch="2">Start</button><button class="sm stop" data-stopch="2">Stop</button></span>
+        </h2>
+        <canvas id="cv2" width="1280" height="720"></canvas>
+        <div class="stats"><div>Codec <b id="codec2">—</b></div><div>FPS <b id="fps2">0</b></div><div>Buf <b id="lat2">—</b></div><div>Res <b id="res2">—</b></div></div>
+      </div>
+      <div class="card logwin"><h2>Log</h2><div id="log"></div></div>
     </div>
-    <div class="card"><h2>Log</h2><div id="log"></div></div>
   </div>
 </main>
 <script>
 const $ = s => document.querySelector(s);
-const S = { base:'', auth:'', token:'', ws:null, decoder:null, configured:false, ctx:null,
-            frames:0, lastFpsT:0, fps:0 };
+const S = { base:'', auth:'', token:'', players:{} };
 
 function log(m, c='') { const e=$('#log'); e.innerHTML += `<span class="log-${c||'mut'}">[${new Date().toLocaleTimeString()}] ${m}</span>\n`; e.scrollTop=e.scrollHeight; }
 function api(path, opts={}) {
@@ -78,19 +94,42 @@ function api(path, opts={}) {
 async function connect() {
   S.base = $('#server').value.replace(/\/+$/,'');
   S.auth = 'Basic ' + btoa($('#email').value + ':' + $('#password').value);
-  if (!('VideoDecoder' in window)) { log('This browser has no WebCodecs support. Use desktop Chrome/Edge.', 'err'); return; }
+  if (!('VideoDecoder' in window)) { log('No WebCodecs in this context. Use desktop Chrome/Edge over http://localhost or https (not file://).', 'err'); return; }
   try {
     const rd = await api('/api/devices');
     if (!rd.ok) { log('Login failed: HTTP ' + rd.status, 'err'); return; }
     const devices = await rd.json();
+    const cams = devices.filter(d => d.attributes && (d.attributes.camera === true || d.attributes.camera === 'true'));
     const sel = $('#device'); sel.innerHTML = '';
-    devices.forEach(d => { const o=document.createElement('option'); o.value=d.id; o.textContent=`${d.name} (${d.uniqueId})`; sel.appendChild(o); });
-    // mint a token for the websocket
+    if (!cams.length) sel.innerHTML = '<option value="">no camera devices (attribute camera=true)</option>';
+    cams.forEach(d => { const o=document.createElement('option'); o.value=d.id; o.textContent=`${d.name} (${d.uniqueId})`; sel.appendChild(o); });
     const rt = await api('/api/session/token', { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded' }, body:'' });
     S.token = (await rt.text()).replace(/^"|"$/g,'').trim();
-    $('#connInfo').textContent = `${devices.length} device(s); token acquired.`;
-    log(`Connected. ${devices.length} device(s).`, 'ok');
+    $('#connInfo').textContent = `${cams.length} camera device(s) of ${devices.length}; token acquired.`;
+    saveCreds();
+    log(`Connected. ${cams.length} camera device(s).`, 'ok');
   } catch (e) { log('Connect error: ' + e.message, 'err'); }
+}
+
+function saveCreds() {
+  try {
+    if ($('#remember').checked) {
+      localStorage.setItem('jc181creds', JSON.stringify({ server:$('#server').value, email:$('#email').value, password:$('#password').value }));
+    } else {
+      localStorage.removeItem('jc181creds');
+    }
+  } catch (e) {}
+}
+function loadCreds() {
+  try {
+    const c = JSON.parse(localStorage.getItem('jc181creds') || 'null');
+    if (c) {
+      if (c.server) $('#server').value = c.server;
+      $('#email').value = c.email || '';
+      $('#password').value = c.password || '';
+      $('#remember').checked = true;
+    }
+  } catch (e) {}
 }
 
 // ---- Annex-B helpers ----
@@ -112,83 +151,128 @@ function h264Codec(data, sps) {
   return 'avc1.' + [p,c,l].map(x=>x.toString(16).padStart(2,'0')).join('');
 }
 
-function ensureDecoder(codec) {
-  S.decoder = new VideoDecoder({
-    output: (frame) => {
-      const cv = $('#canvas');
-      if (cv.width !== frame.displayWidth) { cv.width = frame.displayWidth; cv.height = frame.displayHeight; $('#stRes').textContent = frame.displayWidth+'×'+frame.displayHeight; }
-      S.ctx.drawImage(frame, 0, 0, cv.width, cv.height);
-      frame.close();
-      S.frames++;
-      const now = performance.now();
-      if (now - S.lastFpsT >= 1000) { $('#stFps').textContent = S.frames; S.frames = 0; S.lastFpsT = now; }
-    },
-    error: (e) => log('Decoder error: ' + e.message, 'err')
-  });
-  S.decoder.configure({ codec, optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware' });
-  $('#stCodec').textContent = codec;
-  log('Decoder configured: ' + codec, 'ok');
+function makePlayer(ch) {
+  const p = { ch, ws:null, decoder:null, configured:false, frames:0, lastFpsT:0,
+    queue:[], basePts:null, baseWall:0, raf:null, target:120,
+    canvas:$('#cv'+ch), codec:$('#codec'+ch), fps:$('#fps'+ch), lat:$('#lat'+ch), res:$('#res'+ch) };
+  p.ctx = p.canvas.getContext('2d');
+  return p;
 }
 
-function openSocket() {
-  const deviceId = Number($('#device').value), channel = Number($('#channel').value);
+function drawFrame(p, frame) {
+  if (p.canvas.width !== frame.displayWidth) { p.canvas.width = frame.displayWidth; p.canvas.height = frame.displayHeight; p.res.textContent = frame.displayWidth+'×'+frame.displayHeight; }
+  p.ctx.drawImage(frame, 0, 0, p.canvas.width, p.canvas.height);
+  p.frames++;
+  const now = performance.now();
+  if (now - p.lastFpsT >= 1000) { p.fps.textContent = p.frames; p.frames = 0; p.lastFpsT = now; }
+}
+
+// Paced renderer: draw frames on the display refresh, timed by their own PTS, with a
+// small jitter buffer to absorb bursty network delivery -> smooth playback.
+function renderLoop(p) {
+  p.raf = requestAnimationFrame(() => renderLoop(p));
+  const now = performance.now();
+  if (p.basePts === null) {
+    if (!p.queue.length) return;
+    p.basePts = p.queue[0].pts;
+    p.baseWall = now + p.target;   // present the first buffered frame after `target` ms
+  }
+  let draw = null;
+  while (p.queue.length) {
+    const displayAt = p.baseWall + (p.queue[0].pts - p.basePts) / 1000; // pts is microseconds
+    if (displayAt <= now) { if (draw) draw.frame.close(); draw = p.queue.shift(); }
+    else break;
+  }
+  if (draw) { drawFrame(p, draw.frame); draw.frame.close(); }
+  p.lat.textContent = p.queue.length + 'f';
+  // if we drifted far behind live (deep backlog), drop to catch up and re-anchor
+  if (p.queue.length > 45) { while (p.queue.length > 12) p.queue.shift().frame.close(); p.basePts = null; }
+}
+
+function configureDecoder(p, codec) {
+  p.target = Math.max(0, Number($('#buffer').value) || 0);
+  p.decoder = new VideoDecoder({
+    output: (frame) => {
+      p.queue.push({ frame, pts: frame.timestamp });
+      if (p.raf === null) renderLoop(p);
+    },
+    error: (e) => log(`CH${p.ch} decoder error: ` + e.message, 'err')
+  });
+  p.decoder.configure({ codec, optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware' });
+  p.codec.textContent = codec;
+  log(`CH${p.ch} decoder: ` + codec + ` (buffer ${p.target}ms)`, 'ok');
+}
+
+function openSocket(p) {
+  const deviceId = Number($('#device').value);
   const wsBase = S.base.replace(/^http/, 'ws');
-  const url = `${wsBase}/api/stream/video?deviceId=${deviceId}&channel=${channel}&token=${encodeURIComponent(S.token)}`;
-  S.configured = false; S.ctx = $('#canvas').getContext('2d');
-  const ws = new WebSocket(url); ws.binaryType = 'arraybuffer'; S.ws = ws;
-  log('Opening video socket…');
-  ws.onopen = () => log('Socket open; waiting for frames…', 'ok');
-  ws.onclose = () => log('Socket closed.');
-  ws.onerror = () => log('Socket error (auth/token/permission?).', 'err');
+  const url = `${wsBase}/api/stream/video?deviceId=${deviceId}&channel=${p.ch}&token=${encodeURIComponent(S.token)}`;
+  p.configured = false;
+  const ws = new WebSocket(url); ws.binaryType = 'arraybuffer'; p.ws = ws;
+  log(`CH${p.ch} opening socket…`);
+  ws.onopen = () => log(`CH${p.ch} socket open; waiting for frames…`, 'ok');
+  ws.onclose = () => log(`CH${p.ch} socket closed.`);
+  ws.onerror = () => log(`CH${p.ch} socket error (endpoint 404 / token / permission?).`, 'err');
   ws.onmessage = (ev) => {
     const buf = new Uint8Array(ev.data);
-    const payloadType = buf[0];
-    const keyFrame = buf[1] === 1;
+    const payloadType = buf[0], keyFrame = buf[1] === 1;
     const ts = Number(new DataView(ev.data).getBigUint64(2));
     const nal = buf.subarray(10);
     const h265 = payloadType === 99;
     try {
-      if (!S.configured) {
-        if (!keyFrame) return; // must start on a keyframe
+      if (!p.configured) {
+        if (!keyFrame) return;
         let codec;
-        if (h265) { codec = 'hev1.1.6.L120.B0'; }
+        if (h265) codec = 'hev1.1.6.L120.B0';
         else { const u = nalUnits(nal, false); const sps = u.find(x => x.type===7); codec = sps ? h264Codec(nal, sps) : 'avc1.42e01e'; }
-        ensureDecoder(codec);
-        S.configured = true;
+        configureDecoder(p, codec);
+        p.configured = true;
       }
-      const t0 = performance.now();
-      const chunk = new EncodedVideoChunk({ type: keyFrame ? 'key' : 'delta', timestamp: ts * 1000, data: nal });
-      S.decoder.decode(chunk);
-      $('#stLat').textContent = (performance.now() - t0).toFixed(1) + ' ms';
-    } catch (e) { log('Frame error: ' + e.message, 'err'); }
+      p.decoder.decode(new EncodedVideoChunk({ type: keyFrame ? 'key' : 'delta', timestamp: ts * 1000, data: nal }));
+    } catch (e) { log(`CH${p.ch} frame error: ` + e.message, 'err'); }
   };
 }
 
-async function start() {
+async function startChannel(ch) {
   if (!S.token) { log('Connect first.', 'err'); return; }
   const deviceId = Number($('#device').value);
-  const body = { deviceId, type:'videoStart', attributes:{ index:Number($('#channel').value), streamType:Number($('#streamType').value) } };
-  log('→ videoStart ' + JSON.stringify(body.attributes));
+  if (!deviceId) { log('Pick a device.', 'err'); return; }
+  stopChannel(ch, true); // reset any existing
+  const p = makePlayer(ch); S.players[ch] = p;
+  const body = { deviceId, type:'videoStart', attributes:{ index:ch, streamType:Number($('#streamType').value) } };
+  log(`CH${ch} → videoStart ${JSON.stringify(body.attributes)}`);
   try {
     const r = await api('/api/commands/send', { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(body) });
-    log('← HTTP ' + r.status + (r.status===202?' (queued)':''), r.ok?'ok':'err');
-    if (r.ok) openSocket();
-  } catch (e) { log('Command error: ' + e.message, 'err'); }
+    log(`CH${ch} ← HTTP ${r.status}${r.status===202?' (queued)':''}`, r.ok?'ok':'err');
+    if (r.ok) openSocket(p);
+  } catch (e) { log(`CH${ch} command error: ` + e.message, 'err'); }
 }
 
-async function stop() {
-  if (S.ws) { S.ws.close(); S.ws = null; }
-  if (S.decoder && S.decoder.state !== 'closed') { try { S.decoder.close(); } catch(e){} S.decoder = null; }
-  S.configured = false;
-  const deviceId = Number($('#device').value);
-  try { await api('/api/commands/send', { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ deviceId, type:'videoStop', attributes:{ index:Number($('#channel').value) } }) }); } catch(e){}
-  log('Stopped.');
+function stopChannel(ch, quiet) {
+  const p = S.players[ch];
+  if (p) {
+    if (p.raf !== null) cancelAnimationFrame(p.raf);
+    p.queue.forEach(x => { try { x.frame.close(); } catch(e){} });
+    p.queue = [];
+    if (p.ws) { try { p.ws.close(); } catch(e){} }
+    if (p.decoder && p.decoder.state !== 'closed') { try { p.decoder.close(); } catch(e){} }
+    delete S.players[ch];
+  }
+  if (!quiet) {
+    const deviceId = Number($('#device').value);
+    api('/api/commands/send', { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ deviceId, type:'videoStop', attributes:{ index:ch } }) }).catch(()=>{});
+    log(`CH${ch} stopped.`);
+  }
 }
 
 $('#connect').onclick = connect;
-$('#start').onclick = start;
-$('#stop').onclick = stop;
-log('Ready. Desktop Chrome/Edge recommended (WebCodecs). Enter credentials and Connect.', 'mut');
+$('#startAll').onclick = () => { startChannel(1); startChannel(2); };
+$('#stopAll').onclick = () => { stopChannel(1); stopChannel(2); };
+document.querySelectorAll('[data-startch]').forEach(b => b.onclick = () => startChannel(Number(b.dataset.startch)));
+document.querySelectorAll('[data-stopch]').forEach(b => b.onclick = () => stopChannel(Number(b.dataset.stopch)));
+$('#remember').onchange = saveCreds;
+loadCreds();
+log('Ready. Desktop Chrome/Edge over http://localhost or https. Enter credentials and Connect.', 'mut');
 </script>
 </body>
 </html>
