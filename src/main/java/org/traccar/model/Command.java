@@ -94,6 +94,7 @@ public class Command extends BaseCommand {
     public static final String KEY_END_TIME = "endTime";
     public static final String KEY_PLAYBACK_MODE = "playbackMode";
     public static final String KEY_PLAYBACK_SPEED = "playbackSpeed";
+    public static final String KEY_STREAM_TYPE = "streamType";
 
     @QueryIgnore
     @Override

@@ -58,36 +58,48 @@ public class VideoStreamManager {
         return stream != null ? stream.getSegment(index) : null;
     }
 
+    private record Segment(ByteBuf data, double duration) { }
+
     static class DeviceStream {
 
         private final VideoStreamWriter writer = new VideoStreamWriter();
-        private final LinkedHashMap<Integer, ByteBuf> segments = new LinkedHashMap<>();
+        private final LinkedHashMap<Integer, Segment> segments = new LinkedHashMap<>();
         private ByteBuf currentSegment;
         private int segmentIndex;
         private long firstTimestamp;
+        private long segmentStartTimestamp;
+        private long lastTimestamp;
 
         synchronized void addFrame(ByteBuf nalData, long timestamp, boolean isKeyFrame, int payloadType) {
+            // Only cut a segment on a keyframe, so every segment starts with a keyframe + PAT/PMT
+            // and can be decoded independently. Cutting mid-GOP produces undecodable segments.
             if (isKeyFrame && currentSegment != null) {
                 finalizeSegment();
             }
 
             if (currentSegment == null) {
+                if (!isKeyFrame) {
+                    return; // never start a segment on a non-keyframe
+                }
                 currentSegment = Unpooled.buffer();
                 if (firstTimestamp == 0) {
                     firstTimestamp = timestamp;
                 }
+                segmentStartTimestamp = timestamp;
             }
 
+            lastTimestamp = timestamp;
             writer.write(currentSegment, nalData, timestamp - firstTimestamp, isKeyFrame, payloadType);
         }
 
         private void finalizeSegment() {
-            segments.put(segmentIndex++, currentSegment);
+            double duration = Math.max(0.1, (lastTimestamp - segmentStartTimestamp) / 1000.0);
+            segments.put(segmentIndex++, new Segment(currentSegment, duration));
             currentSegment = null;
 
             while (segments.size() > MAX_SEGMENTS) {
                 Integer oldest = segments.keySet().iterator().next();
-                segments.remove(oldest).release();
+                segments.remove(oldest).data().release();
             }
         }
 
@@ -95,40 +107,40 @@ public class VideoStreamManager {
             if (currentSegment != null) {
                 currentSegment.release();
             }
-            for (ByteBuf segment : segments.values()) {
-                segment.release();
+            for (Segment segment : segments.values()) {
+                segment.data().release();
             }
         }
 
         static final String EMPTY_PLAYLIST =
-                "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:5\n#EXT-X-MEDIA-SEQUENCE:0\n";
+                "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n";
 
         synchronized String getPlaylist() {
-            if (currentSegment != null) {
-                finalizeSegment();
-            }
             if (segments.isEmpty()) {
                 return EMPTY_PLAYLIST;
             }
 
             int firstIndex = segments.keySet().iterator().next();
+            double targetDuration = segments.values().stream()
+                    .mapToDouble(Segment::duration).max().orElse(2.0);
 
             StringBuilder sb = new StringBuilder();
             sb.append("#EXTM3U\n");
             sb.append("#EXT-X-VERSION:3\n");
-            sb.append("#EXT-X-TARGETDURATION:5\n");
+            sb.append("#EXT-X-TARGETDURATION:").append((int) Math.ceil(targetDuration)).append("\n");
             sb.append("#EXT-X-MEDIA-SEQUENCE:").append(firstIndex).append("\n");
 
-            for (int key : segments.keySet()) {
-                sb.append("#EXTINF:3.0,\n");
-                sb.append(key).append(".ts\n");
+            for (var entry : segments.entrySet()) {
+                sb.append(String.format(java.util.Locale.US, "#EXTINF:%.3f,\n", entry.getValue().duration()));
+                sb.append(entry.getKey()).append(".ts\n");
             }
 
             return sb.toString();
         }
 
         synchronized ByteBuf getSegment(int index) {
-            return segments.get(index);
+            Segment segment = segments.get(index);
+            return segment != null ? segment.data() : null;
         }
     }
 

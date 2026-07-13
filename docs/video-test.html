@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JC181 Video Test</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+<style>
+  :root { --bg:#0f1720; --card:#17212b; --line:#26333f; --fg:#e6edf3; --mut:#8b98a5; --accent:#2f81f7; --ok:#2ea043; --warn:#d29922; --err:#f85149; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:14px 18px; background:var(--card); border-bottom:1px solid var(--line); font-weight:600; }
+  main { display:grid; grid-template-columns:380px 1fr; gap:16px; padding:16px; align-items:start; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:16px; }
+  .card h2 { margin:0 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--mut); }
+  label { display:block; font-size:12px; color:var(--mut); margin:8px 0 3px; }
+  input, select, button { font:inherit; }
+  input, select { width:100%; padding:8px; background:#0d1117; border:1px solid var(--line); border-radius:6px; color:var(--fg); }
+  .row { display:flex; gap:8px; }
+  .row > * { flex:1; }
+  button { cursor:pointer; padding:9px 12px; border:1px solid var(--line); border-radius:6px; background:#21313f; color:var(--fg); }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.stop { background:#3a2226; border-color:#5c2b31; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .btns { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .btns button { flex:1 1 auto; }
+  video { width:100%; background:#000; border-radius:10px; aspect-ratio:16/9; }
+  #log { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; background:#0d1117; border:1px solid var(--line); border-radius:8px; padding:10px; height:220px; overflow:auto; white-space:pre-wrap; }
+  .log-ok{color:var(--ok);} .log-err{color:var(--err);} .log-warn{color:var(--warn);} .log-mut{color:var(--mut);}
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--mut); font-weight:600; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:99px; font-size:11px; background:#21313f; }
+  .muted { color:var(--mut); font-size:12px; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<header>JC181 Dashcam — Live &amp; Playback Test Console</header>
+<main>
+  <div>
+    <div class="card">
+      <h2>1 · Connection</h2>
+      <label>Server URL</label>
+      <input id="server" value="https://fleetvts.trackongps.com">
+      <label>Email</label>
+      <input id="email" autocomplete="username" placeholder="you@example.com">
+      <label>Password</label>
+      <input id="password" type="password" autocomplete="current-password">
+      <div class="btns"><button class="primary" id="connect">Connect &amp; load devices</button></div>
+      <div class="muted" id="connInfo" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2>2 · Device &amp; channel</h2>
+      <label>Device</label>
+      <select id="device"><option value="">— connect first —</option></select>
+      <label>Channel</label>
+      <select id="channel"><option value="1">1 (road)</option><option value="2">2 (cabin)</option></select>
+    </div>
+
+    <div class="card">
+      <h2>3 · Live</h2>
+      <label>Stream</label>
+      <select id="streamType"><option value="0">Main (high quality)</option><option value="1">Sub (low latency)</option></select>
+      <div class="btns">
+        <button class="primary" id="live">Start live</button>
+        <button class="stop" data-cmd="videoStop">Stop</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>4 · Playback (history)</h2>
+      <div class="row">
+        <div><label>Start</label><input id="startTime" type="datetime-local"></div>
+        <div><label>End</label><input id="endTime" type="datetime-local"></div>
+      </div>
+      <div class="row">
+        <div><label>Mode</label><select id="mode"><option value="0">Normal</option><option value="1">Fast-forward</option></select></div>
+        <div><label>Speed (FF)</label><select id="speed"><option value="0">—</option><option value="1">1x</option><option value="2">2x</option><option value="3">4x</option><option value="4">8x</option><option value="5">16x</option></select></div>
+      </div>
+      <div class="btns">
+        <button class="primary" id="playback">Start playback</button>
+        <button data-cmd="videoPause">Pause</button>
+        <button data-cmd="videoResume">Resume</button>
+        <button class="stop" data-cmd="videoStop">Stop</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>5 · Query recordings</h2>
+      <div class="muted">Uses the Start/End above (channel-scoped). Result arrives asynchronously; this polls positions for ~20s.</div>
+      <div class="btns"><button id="resources">Query recordings</button></div>
+      <div id="resList" style="margin-top:10px"></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card"><h2>Player</h2><video id="video" controls autoplay muted playsinline></video>
+      <div class="muted" id="streamUrl" style="margin-top:8px"></div>
+    </div>
+    <div class="card"><h2>Log</h2><div id="log"></div></div>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const state = { base:'', auth:'', hls:null };
+
+function log(msg, cls='') {
+  const el = $('#log');
+  const t = new Date().toLocaleTimeString();
+  el.innerHTML += `<span class="log-${cls||'mut'}">[${t}] ${msg}</span>\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function api(path, opts={}) {
+  const headers = Object.assign({ 'Authorization': state.auth }, opts.headers || {});
+  return fetch(state.base + path, Object.assign({ credentials:'omit' }, opts, { headers }));
+}
+
+async function connect() {
+  state.base = $('#server').value.replace(/\/+$/,'');
+  state.auth = 'Basic ' + btoa($('#email').value + ':' + $('#password').value);
+  log('Connecting to ' + state.base + ' …');
+  try {
+    const r = await api('/api/devices');
+    if (!r.ok) { log('Login/devices failed: HTTP ' + r.status, 'err'); return; }
+    const devices = await r.json();
+    const sel = $('#device');
+    sel.innerHTML = '';
+    devices.forEach(d => {
+      const o = document.createElement('option');
+      o.value = d.id;
+      o.textContent = `${d.name} (${d.uniqueId}) — ${d.status||'?'}`;
+      sel.appendChild(o);
+    });
+    $('#connInfo').textContent = `${devices.length} device(s) loaded.`;
+    log(`Connected. ${devices.length} device(s).`, 'ok');
+  } catch (e) { log('Connection error: ' + e.message + ' — check CORS / server URL / mixed content.', 'err'); }
+}
+
+async function sendCommand(type, extra={}) {
+  const deviceId = Number($('#device').value);
+  if (!deviceId) { log('Pick a device first.', 'warn'); return null; }
+  const attributes = Object.assign({ index: Number($('#channel').value) }, extra);
+  const body = { deviceId, type, attributes };
+  log(`→ ${type} ${JSON.stringify(attributes)}`);
+  try {
+    const r = await api('/api/commands/send', {
+      method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body) });
+    if (r.status === 200) log(`← 200 sent to device (online)`, 'ok');
+    else if (r.status === 202) log(`← 202 queued (device offline — will send on reconnect)`, 'warn');
+    else log(`← HTTP ${r.status}: ${(await r.text()).slice(0,200)}`, 'err');
+    return r.status;
+  } catch (e) { log('Command error: ' + e.message, 'err'); return null; }
+}
+
+function toIso(inputId) {
+  const v = $(inputId).value;
+  if (!v) return '';
+  return new Date(v).toISOString(); // datetime-local is local time -> absolute UTC instant
+}
+
+function playStream() {
+  const deviceId = Number($('#device').value);
+  const channel = Number($('#channel').value);
+  const url = `${state.base}/api/stream/${deviceId}/${channel}/live.m3u8`;
+  $('#streamUrl').innerHTML = 'Stream: <a href="'+url+'" target="_blank">'+url+'</a>';
+  const video = $('#video');
+  if (state.hls) { state.hls.destroy(); state.hls = null; }
+  const xhrSetup = xhr => xhr.setRequestHeader('Authorization', state.auth);
+  if (window.Hls && Hls.isSupported()) {
+    const hls = new Hls({
+      xhrSetup,
+      liveSyncDurationCount: 1,          // sit ~1 segment behind the live edge
+      liveMaxLatencyDurationCount: 4,    // seek to catch up if we fall too far behind
+      maxLiveSyncPlaybackRate: 1.5,      // speed up slightly to catch up instead of stalling
+      maxBufferLength: 6,
+      backBufferLength: 0,
+      lowLatencyMode: true,
+      manifestLoadingMaxRetry: 30, manifestLoadingRetryDelay: 500,
+      levelLoadingMaxRetry: 30, fragLoadingMaxRetry: 6 });
+    state.hls = hls;
+    hls.on(Hls.Events.ERROR, (_e, d) => { if (d.fatal) log('HLS error: ' + d.type + '/' + d.details, 'warn'); });
+    hls.loadSource(url);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(()=>{}));
+    log('Player attached. Waiting for camera to push frames (a few seconds)…', 'mut');
+  } else {
+    // Safari native HLS (cannot attach auth header — only works if same-origin/cookie)
+    video.src = url;
+    log('hls.js unsupported; using native player (auth header not sent).', 'warn');
+  }
+}
+
+async function queryResources() {
+  const deviceId = Number($('#device').value);
+  const s = await sendCommand('videoResources', { startTime: toIso('#startTime'), endTime: toIso('#endTime') });
+  if (s === null) return;
+  $('#resList').innerHTML = '<span class="muted">Waiting for camera to return the list…</span>';
+  const deadline = Date.now() + 20000;
+  const poll = async () => {
+    try {
+      const r = await api('/api/positions?deviceId=' + deviceId);
+      if (r.ok) {
+        const positions = await r.json();
+        for (const p of positions) {
+          if (p.attributes && p.attributes.videoResources) {
+            renderResources(JSON.parse(p.attributes.videoResources));
+            log('Recordings list received.', 'ok');
+            return;
+          }
+        }
+      }
+    } catch (e) { /* ignore */ }
+    if (Date.now() < deadline) setTimeout(poll, 2000);
+    else { $('#resList').innerHTML = '<span class="muted">No list received (camera may have none for that range, or list still uploading).</span>'; log('No recordings list within 20s.', 'warn'); }
+  };
+  setTimeout(poll, 2000);
+}
+
+function renderResources(list) {
+  if (!list.length) { $('#resList').innerHTML = '<span class="muted">No recordings in that range.</span>'; return; }
+  let html = '<table><tr><th>Ch</th><th>Start</th><th>End</th><th>Size</th><th></th></tr>';
+  list.forEach((x,i) => {
+    html += `<tr><td>${x.channel}</td><td>${x.startTime}</td><td>${x.endTime}</td><td>${(x.size/1048576).toFixed(1)} MB</td>`
+          + `<td><button data-play="${i}">▶</button></td></tr>`;
+  });
+  html += '</table>';
+  const box = $('#resList'); box.innerHTML = html;
+  box.querySelectorAll('[data-play]').forEach(b => b.onclick = async () => {
+    const x = list[Number(b.dataset.play)];
+    $('#channel').value = String(x.channel);
+    const s = await sendCommand('videoPlayback', { startTime: x.startTime, endTime: x.endTime });
+    if (s === 200 || s === 202) playStream();
+  });
+}
+
+$('#connect').onclick = connect;
+document.querySelectorAll('[data-cmd]').forEach(b => b.onclick = () => sendCommand(b.dataset.cmd));
+$('#live').onclick = async () => {
+  const s = await sendCommand('videoStart', { streamType: Number($('#streamType').value) });
+  if (s === 200 || s === 202) playStream();
+};
+$('#playback').onclick = async () => {
+  const s = await sendCommand('videoPlayback', {
+    startTime: toIso('#startTime'), endTime: toIso('#endTime'),
+    playbackMode: Number($('#mode').value), playbackSpeed: Number($('#speed').value) });
+  if (s === 200 || s === 202) playStream();
+};
+$('#resources').onclick = queryResources;
+
+// default time range: last hour
+const now = new Date(); const hourAgo = new Date(now.getTime() - 3600000);
+const fmt = d => new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,16);
+$('#startTime').value = fmt(hourAgo); $('#endTime').value = fmt(now);
+log('Ready. Enter credentials and Connect.', 'mut');
+</script>
+</body>
+</html>
