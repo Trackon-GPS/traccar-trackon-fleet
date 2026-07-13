@@ -18,6 +18,7 @@ package org.traccar.web;
 import com.google.inject.servlet.ServletModule;
 import org.traccar.api.AsyncSocketServlet;
 import org.traccar.api.MediaFilter;
+import org.traccar.api.VideoSocketServlet;
 
 public class WebModule extends ServletModule {
 
@@ -27,5 +28,6 @@ public class WebModule extends ServletModule {
         filter("/api/media/*").through(MediaFilter.class);
         serve("/.well-known/*").with(WellKnownServlet.class);
         serve("/api/socket").with(AsyncSocketServlet.class);
+        serve("/api/stream/video").with(VideoSocketServlet.class);
     }
 }

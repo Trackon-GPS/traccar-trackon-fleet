@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JC181 Low-Latency Live Test</title>
+<style>
+  :root { --bg:#0f1720; --card:#17212b; --line:#26333f; --fg:#e6edf3; --mut:#8b98a5; --accent:#2f81f7; --ok:#2ea043; --err:#f85149; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:14px 18px; background:var(--card); border-bottom:1px solid var(--line); font-weight:600; }
+  main { display:grid; grid-template-columns:360px 1fr; gap:16px; padding:16px; align-items:start; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:16px; }
+  .card h2 { margin:0 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--mut); }
+  label { display:block; font-size:12px; color:var(--mut); margin:8px 0 3px; }
+  input, select { width:100%; padding:8px; background:#0d1117; border:1px solid var(--line); border-radius:6px; color:var(--fg); }
+  button { cursor:pointer; padding:9px 12px; border:1px solid var(--line); border-radius:6px; background:#21313f; color:var(--fg); font:inherit; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.stop { background:#3a2226; border-color:#5c2b31; }
+  .btns { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .btns button { flex:1 1 auto; }
+  canvas { width:100%; background:#000; border-radius:10px; aspect-ratio:16/9; display:block; }
+  #log { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; background:#0d1117; border:1px solid var(--line); border-radius:8px; padding:10px; height:220px; overflow:auto; white-space:pre-wrap; }
+  .log-ok{color:var(--ok);} .log-err{color:var(--err);} .log-mut{color:var(--mut);}
+  .stats { display:flex; gap:18px; margin-top:8px; font-size:13px; }
+  .stats b { color:var(--accent); }
+  .muted { color:var(--mut); font-size:12px; }
+</style>
+</head>
+<body>
+<header>JC181 — Low-Latency Live (WebSocket + WebCodecs)</header>
+<main>
+  <div>
+    <div class="card">
+      <h2>1 · Connection</h2>
+      <label>Server URL</label>
+      <input id="server" value="https://fleetvts.trackongps.com">
+      <label>Email</label><input id="email" autocomplete="username">
+      <label>Password</label><input id="password" type="password" autocomplete="current-password">
+      <div class="btns"><button class="primary" id="connect">Connect</button></div>
+      <div class="muted" id="connInfo" style="margin-top:8px"></div>
+    </div>
+    <div class="card">
+      <h2>2 · Device &amp; channel</h2>
+      <label>Device</label><select id="device"><option value="">— connect first —</option></select>
+      <label>Channel</label><select id="channel"><option value="1">1 (road)</option><option value="2">2 (cabin)</option></select>
+      <label>Stream</label><select id="streamType"><option value="0">Main</option><option value="1">Sub (lower latency)</option></select>
+      <div class="btns">
+        <button class="primary" id="start">Start live</button>
+        <button class="stop" id="stop">Stop</button>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div class="card"><h2>Player</h2><canvas id="canvas" width="1280" height="720"></canvas>
+      <div class="stats">
+        <div>Codec: <b id="stCodec">—</b></div>
+        <div>FPS: <b id="stFps">0</b></div>
+        <div>Frame→paint: <b id="stLat">—</b></div>
+        <div>Res: <b id="stRes">—</b></div>
+      </div>
+    </div>
+    <div class="card"><h2>Log</h2><div id="log"></div></div>
+  </div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const S = { base:'', auth:'', token:'', ws:null, decoder:null, configured:false, ctx:null,
+            frames:0, lastFpsT:0, fps:0 };
+
+function log(m, c='') { const e=$('#log'); e.innerHTML += `<span class="log-${c||'mut'}">[${new Date().toLocaleTimeString()}] ${m}</span>\n`; e.scrollTop=e.scrollHeight; }
+function api(path, opts={}) {
+  const headers = Object.assign({ 'Authorization': S.auth }, opts.headers||{});
+  return fetch(S.base + path, Object.assign({ credentials:'omit' }, opts, { headers }));
+}
+
+async function connect() {
+  S.base = $('#server').value.replace(/\/+$/,'');
+  S.auth = 'Basic ' + btoa($('#email').value + ':' + $('#password').value);
+  if (!('VideoDecoder' in window)) { log('This browser has no WebCodecs support. Use desktop Chrome/Edge.', 'err'); return; }
+  try {
+    const rd = await api('/api/devices');
+    if (!rd.ok) { log('Login failed: HTTP ' + rd.status, 'err'); return; }
+    const devices = await rd.json();
+    const sel = $('#device'); sel.innerHTML = '';
+    devices.forEach(d => { const o=document.createElement('option'); o.value=d.id; o.textContent=`${d.name} (${d.uniqueId})`; sel.appendChild(o); });
+    // mint a token for the websocket
+    const rt = await api('/api/session/token', { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded' }, body:'' });
+    S.token = (await rt.text()).replace(/^"|"$/g,'').trim();
+    $('#connInfo').textContent = `${devices.length} device(s); token acquired.`;
+    log(`Connected. ${devices.length} device(s).`, 'ok');
+  } catch (e) { log('Connect error: ' + e.message, 'err'); }
+}
+
+// ---- Annex-B helpers ----
+function nalUnits(data, h265) {
+  const units = []; const n = data.length; let i = 0, ps = -1, pt = -1;
+  while (i + 3 < n) {
+    if (data[i]===0 && data[i+1]===0 && (data[i+2]===1 || (data[i+2]===0 && data[i+3]===1))) {
+      const sc = data[i+2]===1 ? 3 : 4; const start = i + sc;
+      if (ps>=0) units.push({ type:pt, start:ps, end:i });
+      ps = start; pt = h265 ? (data[start]>>1)&0x3f : data[start]&0x1f;
+      i = start + 2;
+    } else i++;
+  }
+  if (ps>=0) units.push({ type:pt, start:ps, end:n });
+  return units;
+}
+function h264Codec(data, sps) {
+  const p=data[sps.start+1], c=data[sps.start+2], l=data[sps.start+3];
+  return 'avc1.' + [p,c,l].map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+
+function ensureDecoder(codec) {
+  S.decoder = new VideoDecoder({
+    output: (frame) => {
+      const cv = $('#canvas');
+      if (cv.width !== frame.displayWidth) { cv.width = frame.displayWidth; cv.height = frame.displayHeight; $('#stRes').textContent = frame.displayWidth+'×'+frame.displayHeight; }
+      S.ctx.drawImage(frame, 0, 0, cv.width, cv.height);
+      frame.close();
+      S.frames++;
+      const now = performance.now();
+      if (now - S.lastFpsT >= 1000) { $('#stFps').textContent = S.frames; S.frames = 0; S.lastFpsT = now; }
+    },
+    error: (e) => log('Decoder error: ' + e.message, 'err')
+  });
+  S.decoder.configure({ codec, optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware' });
+  $('#stCodec').textContent = codec;
+  log('Decoder configured: ' + codec, 'ok');
+}
+
+function openSocket() {
+  const deviceId = Number($('#device').value), channel = Number($('#channel').value);
+  const wsBase = S.base.replace(/^http/, 'ws');
+  const url = `${wsBase}/api/stream/video?deviceId=${deviceId}&channel=${channel}&token=${encodeURIComponent(S.token)}`;
+  S.configured = false; S.ctx = $('#canvas').getContext('2d');
+  const ws = new WebSocket(url); ws.binaryType = 'arraybuffer'; S.ws = ws;
+  log('Opening video socket…');
+  ws.onopen = () => log('Socket open; waiting for frames…', 'ok');
+  ws.onclose = () => log('Socket closed.');
+  ws.onerror = () => log('Socket error (auth/token/permission?).', 'err');
+  ws.onmessage = (ev) => {
+    const buf = new Uint8Array(ev.data);
+    const payloadType = buf[0];
+    const keyFrame = buf[1] === 1;
+    const ts = Number(new DataView(ev.data).getBigUint64(2));
+    const nal = buf.subarray(10);
+    const h265 = payloadType === 99;
+    try {
+      if (!S.configured) {
+        if (!keyFrame) return; // must start on a keyframe
+        let codec;
+        if (h265) { codec = 'hev1.1.6.L120.B0'; }
+        else { const u = nalUnits(nal, false); const sps = u.find(x => x.type===7); codec = sps ? h264Codec(nal, sps) : 'avc1.42e01e'; }
+        ensureDecoder(codec);
+        S.configured = true;
+      }
+      const t0 = performance.now();
+      const chunk = new EncodedVideoChunk({ type: keyFrame ? 'key' : 'delta', timestamp: ts * 1000, data: nal });
+      S.decoder.decode(chunk);
+      $('#stLat').textContent = (performance.now() - t0).toFixed(1) + ' ms';
+    } catch (e) { log('Frame error: ' + e.message, 'err'); }
+  };
+}
+
+async function start() {
+  if (!S.token) { log('Connect first.', 'err'); return; }
+  const deviceId = Number($('#device').value);
+  const body = { deviceId, type:'videoStart', attributes:{ index:Number($('#channel').value), streamType:Number($('#streamType').value) } };
+  log('→ videoStart ' + JSON.stringify(body.attributes));
+  try {
+    const r = await api('/api/commands/send', { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(body) });
+    log('← HTTP ' + r.status + (r.status===202?' (queued)':''), r.ok?'ok':'err');
+    if (r.ok) openSocket();
+  } catch (e) { log('Command error: ' + e.message, 'err'); }
+}
+
+async function stop() {
+  if (S.ws) { S.ws.close(); S.ws = null; }
+  if (S.decoder && S.decoder.state !== 'closed') { try { S.decoder.close(); } catch(e){} S.decoder = null; }
+  S.configured = false;
+  const deviceId = Number($('#device').value);
+  try { await api('/api/commands/send', { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ deviceId, type:'videoStop', attributes:{ index:Number($('#channel').value) } }) }); } catch(e){}
+  log('Stopped.');
+}
+
+$('#connect').onclick = connect;
+$('#start').onclick = start;
+$('#stop').onclick = stop;
+log('Ready. Desktop Chrome/Edge recommended (WebCodecs). Enter credentials and Connect.', 'mut');
+</script>
+</body>
+</html>

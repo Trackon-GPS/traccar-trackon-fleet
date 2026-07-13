@@ -23,6 +23,7 @@ import jakarta.inject.Singleton;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Singleton
@@ -31,14 +32,42 @@ public class VideoStreamManager {
     private static final int MAX_SEGMENTS = 5;
 
     private final Map<String, DeviceStream> streams = new ConcurrentHashMap<>();
+    private final Map<String, Set<FrameListener>> subscribers = new ConcurrentHashMap<>();
 
     @Inject
     public VideoStreamManager() {}
+
+    /**
+     * Low-latency consumer of raw video frames (e.g. a WebSocket connection). Called synchronously
+     * on the protocol thread as each frame arrives; implementations must copy the data and return
+     * quickly without blocking.
+     */
+    public interface FrameListener {
+        void onFrame(ByteBuf nalData, long timestamp, boolean keyFrame, int payloadType);
+    }
+
+    public void addSubscriber(long deviceId, int channel, FrameListener listener) {
+        subscribers.computeIfAbsent(deviceId + "_" + channel, k -> ConcurrentHashMap.newKeySet()).add(listener);
+    }
+
+    public void removeSubscriber(long deviceId, int channel, FrameListener listener) {
+        Set<FrameListener> listeners = subscribers.get(deviceId + "_" + channel);
+        if (listeners != null) {
+            listeners.remove(listener);
+        }
+    }
 
     public void handleFrame(
             long deviceId, int channel, ByteBuf nalData, long timestamp, boolean isKeyFrame, int payloadType) {
         DeviceStream stream = streams.computeIfAbsent(deviceId + "_" + channel, k -> new DeviceStream());
         stream.addFrame(nalData, timestamp, isKeyFrame, payloadType);
+
+        Set<FrameListener> listeners = subscribers.get(deviceId + "_" + channel);
+        if (listeners != null) {
+            for (FrameListener listener : listeners) {
+                listener.onFrame(nalData, timestamp, isKeyFrame, payloadType);
+            }
+        }
     }
 
     public String getPlaylist(long deviceId, int channel) {
