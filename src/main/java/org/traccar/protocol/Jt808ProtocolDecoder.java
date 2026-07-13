@@ -1076,6 +1076,28 @@ public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
                                 }
                             }
                             case 0x0001 -> position.addAlarm(Position.ALARM_FAULT);
+                            case 0x0002 -> position.addAlarm(Position.ALARM_TAMPERING); // camera obstructed
+                            case 0x0003 -> {
+                                position.set("seatbelt", false);
+                                position.addAlarm(Position.ALARM_GENERAL);
+                            }
+                            case 0x0004 -> position.set("seatbelt", true);
+                            case 0x0005 -> {
+                                position.set("faceId", "failed");
+                                position.addAlarm(Position.ALARM_GENERAL);
+                            }
+                            case 0x0006 -> position.set("faceId", "success");
+                            case 0x0007, 0x0008 -> position.addAlarm(Position.ALARM_FATIGUE_DRIVING);
+                            case 0x0009 -> position.set("faceAlignment", "failed");
+                            case 0x000A -> {
+                                position.set("face", "lost");
+                                position.addAlarm(Position.ALARM_GENERAL);
+                            }
+                            case 0x000B -> {
+                                position.set("behavior", "drinking");
+                                position.addAlarm(Position.ALARM_GENERAL);
+                            }
+                            case 0x000C -> position.set("driverChanged", true);
                             case 0x0400, 0x0412 -> position.addAlarm(Position.ALARM_ACCELERATION);
                             case 0x0401, 0x0413 -> position.addAlarm(Position.ALARM_BRAKING);
                             case 0x0402, 0x0414 -> position.addAlarm(Position.ALARM_CORNERING);
@@ -1087,6 +1109,20 @@ public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
                             case 0x0409 -> position.addAlarm(Position.ALARM_GEOFENCE_EXIT);
                             case 0x040C -> position.addAlarm(Position.ALARM_DOOR);
                             case 0x0415 -> position.addAlarm(Position.ALARM_LANE_CHANGE);
+                            case 0x0404 -> position.addAlarm(Position.ALARM_FATIGUE_DRIVING); // excessive driving
+                            case 0x040A -> position.set("turnSignal", "left");
+                            case 0x040B -> position.set("turnSignal", "right");
+                            case 0x040D -> position.set("doorEvent", "close");
+                            case 0x0410 -> position.set("mode", "sleep");
+                            case 0x0411 -> position.set("mode", "working");
+                            case 0x0418 -> {
+                                position.set("ubi", "attitude");
+                                position.addAlarm(Position.ALARM_GENERAL);
+                            }
+                            case 0x0419 -> {
+                                position.set("ubi", "euler");
+                                position.addAlarm(Position.ALARM_GENERAL);
+                            }
                             case 0x0C01 -> position.addAlarm(Position.ALARM_SOS);
                             case 0x0C02 -> position.addAlarm(Position.ALARM_LOW_POWER);
                             case 0x0C03 -> position.set(Position.KEY_IGNITION, true);
@@ -1096,6 +1132,42 @@ public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
                             case 0x0C0F -> position.addAlarm(Position.ALARM_LOW_BATTERY);
                             case 0x0C10 -> position.addAlarm(Position.ALARM_POWER_OFF);
                             case 0x0C12 -> position.addAlarm(Position.ALARM_TAMPERING);
+                            case 0x0C06 -> position.set("dmsCalibration", "error");
+                            case 0x0C07 -> {
+                                position.set("identity", "alert");
+                                position.addAlarm(Position.ALARM_GENERAL);
+                            }
+                            case 0x0C08 -> position.addAlarm(Position.ALARM_DOOR);
+                            case 0x0C09 -> {
+                                position.set("sensorFault", "fuel");
+                                position.addAlarm(Position.ALARM_FAULT);
+                            }
+                            case 0x0C0A -> position.addAlarm(Position.ALARM_TEMPERATURE);
+                            case 0x0C0B -> position.set("card", "login");
+                            case 0x0C0C -> position.set("card", "logout");
+                            case 0x0C0D -> {
+                                position.set("card", "unauthorized");
+                                position.addAlarm(Position.ALARM_GENERAL);
+                            }
+                            case 0x0C11 -> {
+                                position.set("ambientSound", true);
+                                position.addAlarm(Position.ALARM_GENERAL);
+                            }
+                            case 0x0C13 -> position.set("activeOffline", true);
+                            case 0x0C14 -> position.set("sdCard", "mounted");
+                            case 0x0C15 -> {
+                                position.set("sdCard", "removed");
+                                position.addAlarm(Position.ALARM_FAULT);
+                            }
+                            case 0x0C16 -> {
+                                position.set("sdCard", "writeError");
+                                position.addAlarm(Position.ALARM_FAULT);
+                            }
+                            case 0x0C17 -> {
+                                position.set("dataOverage", true);
+                                position.addAlarm(Position.ALARM_GENERAL);
+                            }
+                            case 0x0C1A -> position.set("audioDownload", "failed");
                         }
                         buf.readerIndex(endIndex);
                     } else {
