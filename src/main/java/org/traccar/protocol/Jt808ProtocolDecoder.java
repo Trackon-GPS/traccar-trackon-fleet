@@ -600,37 +600,43 @@ public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
         Position position = new Position(getProtocolName());
         position.setDeviceId(deviceSession.getDeviceId());
 
-        getLastLocation(position, null);
+        // stamp a fresh time so this attribute-only position is broadcast as the latest
+        getLastLocation(position, new Date());
 
-        // diagnostic: keep the raw reply so we can see exactly what the camera returns
-        position.set("videoResourcesRaw", ByteBufUtil.hexDump(buf, buf.readerIndex(), buf.readableBytes()));
-
-        buf.readUnsignedShort(); // query serial number
-        long count = buf.readUnsignedInt();
-        position.set("videoResourcesCount", count);
-        TimeZone timeZone = deviceSession.get(DeviceSession.KEY_TIMEZONE);
+        String raw = ByteBufUtil.hexDump(buf, buf.readerIndex(), buf.readableBytes());
+        position.set("videoResourcesRaw", raw);
 
         StringBuilder json = new StringBuilder("[");
-        for (long i = 0; i < count && buf.readableBytes() >= 28; i++) {
-            if (i > 0) {
-                json.append(',');
+        long count = 0;
+        try {
+            buf.readUnsignedShort(); // query serial number
+            count = buf.readUnsignedInt();
+            TimeZone timeZone = deviceSession.get(DeviceSession.KEY_TIMEZONE);
+            for (long i = 0; i < count && buf.readableBytes() >= 28; i++) {
+                if (json.length() > 1) {
+                    json.append(',');
+                }
+                int channel = buf.readUnsignedByte();
+                Date start = readDate(buf, timeZone);
+                Date end = readDate(buf, timeZone);
+                buf.skipBytes(8); // alarm flag
+                int mediaType = buf.readUnsignedByte();
+                int streamType = buf.readUnsignedByte();
+                int memoryType = buf.readUnsignedByte();
+                long size = buf.readUnsignedInt();
+                json.append(String.format(java.util.Locale.US,
+                        "{\"channel\":%d,\"startTime\":\"%s\",\"endTime\":\"%s\","
+                                + "\"mediaType\":%d,\"streamType\":%d,\"memoryType\":%d,\"size\":%d}",
+                        channel, start.toInstant(), end.toInstant(), mediaType, streamType, memoryType, size));
             }
-            int channel = buf.readUnsignedByte();
-            Date start = readDate(buf, timeZone);
-            Date end = readDate(buf, timeZone);
-            buf.skipBytes(8); // alarm flag
-            int mediaType = buf.readUnsignedByte();
-            int streamType = buf.readUnsignedByte();
-            int memoryType = buf.readUnsignedByte();
-            long size = buf.readUnsignedInt();
-            json.append(String.format(
-                    "{\"channel\":%d,\"startTime\":\"%s\",\"endTime\":\"%s\","
-                            + "\"mediaType\":%d,\"streamType\":%d,\"memoryType\":%d,\"size\":%d}",
-                    channel, start.toInstant(), end.toInstant(), mediaType, streamType, memoryType, size));
+        } catch (Exception e) {
+            LOGGER.warn("videoResources parse error (raw={})", raw, e);
         }
         json.append(']');
 
+        position.set("videoResourcesCount", count);
         position.set("videoResources", json.toString());
+        LOGGER.info("JT808 diag videoResources parsed count={} json.len={}", count, json.length());
 
         return position;
     }
