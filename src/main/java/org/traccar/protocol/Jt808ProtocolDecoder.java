@@ -54,6 +54,9 @@ import java.util.TimeZone;
 
 public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
 
+    private static final org.slf4j.Logger LOGGER =
+            org.slf4j.LoggerFactory.getLogger(Jt808ProtocolDecoder.class);
+
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter
             .ofPattern("yyyyMMddHHmmss").withZone(ZoneOffset.UTC);
 
@@ -133,6 +136,9 @@ public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
         data.release();
         buf.writeByte(Checksum.xor(buf.nioBuffer(1, buf.readableBytes() - 1)));
         buf.writeByte(delimiter);
+        if (type == MSG_VIDEO_QUERY || type == MSG_VIDEO_PLAYBACK) {
+            LOGGER.info("JT808 diag => 0x{} {}", Integer.toHexString(type), ByteBufUtil.hexDump(buf));
+        }
         return buf;
     }
 
@@ -344,8 +350,13 @@ public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
             }
         }
 
+        int type = buf.getUnsignedShort(buf.readerIndex() + 1);
+        if (type == MSG_VIDEO_RESOURCE_LIST || type == MSG_TERMINAL_GENERAL_RESPONSE) {
+            LOGGER.info("JT808 diag <= 0x{} {}", Integer.toHexString(type), ByteBufUtil.hexDump(buf));
+        }
+
         delimiter = buf.readUnsignedByte();
-        int type = buf.readUnsignedShort();
+        type = buf.readUnsignedShort();
         int attribute = buf.readUnsignedShort();
 
         int bodyLength = BitUtil.to(attribute, 10);
