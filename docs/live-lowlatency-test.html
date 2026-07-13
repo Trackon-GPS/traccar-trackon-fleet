@@ -114,12 +114,12 @@
     <div class="pane-live">
       <div class="players">
         <div class="card player">
-          <h2>Channel 1 (road) <span class="win-btns"><button class="sm primary" data-startch="1">Start</button><button class="sm stop" data-stopch="1">Stop</button></span></h2>
+          <h2>Channel 1 (road) <span class="win-btns"><button class="sm" id="spk1" title="audio">🔇</button><button class="sm primary" data-startch="1">Start</button><button class="sm stop" data-stopch="1">Stop</button></span></h2>
           <canvas id="cv1" width="1280" height="720"></canvas>
           <div class="stats"><div>Codec <b id="codec1">—</b></div><div>FPS <b id="fps1">0</b></div><div>Buf <b id="lat1">—</b></div><div>Res <b id="res1">—</b></div></div>
         </div>
         <div class="card player">
-          <h2>Channel 2 (cabin) <span class="win-btns"><button class="sm primary" data-startch="2">Start</button><button class="sm stop" data-stopch="2">Stop</button></span></h2>
+          <h2>Channel 2 (cabin) <span class="win-btns"><button class="sm" id="spk2" title="audio">🔇</button><button class="sm primary" data-startch="2">Start</button><button class="sm stop" data-stopch="2">Stop</button></span></h2>
           <canvas id="cv2" width="1280" height="720"></canvas>
           <div class="stats"><div>Codec <b id="codec2">—</b></div><div>FPS <b id="fps2">0</b></div><div>Buf <b id="lat2">—</b></div><div>Res <b id="res2">—</b></div></div>
         </div>
@@ -129,7 +129,7 @@
     <!-- PLAYBACK view (single channel — camera serves one playback stream at a time) -->
     <div class="pane-playback" hidden>
       <div class="card player" style="max-width:680px">
-        <h2>Playback — <span id="pbChLabel">Channel 1 (road)</span></h2>
+        <h2>Playback — <span id="pbChLabel">Channel 1 (road)</span> <button class="sm" id="spkpb" title="audio" style="float:right">🔇</button></h2>
         <canvas id="pcv1" width="1280" height="720"></canvas>
         <div class="stats"><div>FPS <b id="pfps1">0</b></div><div>Buf <b id="pbuf1">—</b></div><div>Res <b id="pres1">—</b></div></div>
       </div>
@@ -154,7 +154,7 @@
 </main>
 <script>
 const $ = s => document.querySelector(s);
-const S = { base:'', auth:'', token:'' };
+const S = { base:'', auth:'', token:'', audioKey:null };  // audioKey: which window's audio plays (one at a time)
 const live = {};   // channel -> player
 let pbPlayer = null;   // single playback player (camera serves one playback stream at a time)
 let pbActiveCh = 0;    // camera channel currently being played back
@@ -227,7 +227,57 @@ function makePlayer(canvas, els, target) {
   return { ws:null, decoder:null, configured:false, frames:0, lastFpsT:0,
     queue:[], basePts:null, baseWall:0, raf:null, target:target||120,
     canvas, ctx:canvas.getContext('2d'),
-    elCodec:els.codec||null, elFps:els.fps||null, elLat:els.lat||null, elRes:els.res||null, label:els.label };
+    elCodec:els.codec||null, elFps:els.fps||null, elLat:els.lat||null, elRes:els.res||null, label:els.label,
+    key:els.key||null, muted: S.audioKey !== els.key, audioCtx:null, audioDecoder:null, audioCfg:false, audioNext:0 };
+}
+
+// ---- audio (AAC over WebCodecs -> Web Audio) ----
+const AAC_RATES = [96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000,7350];
+function parseAdts(d) {
+  if (d.length < 7 || d[0] !== 0xff || (d[1] & 0xf0) !== 0xf0) return null;
+  const objType = ((d[2]>>6)&0x3)+1, freqIdx = (d[2]>>2)&0xf, chan = ((d[2]&0x1)<<2)|((d[3]>>6)&0x3);
+  return { objType, freqIdx, chan: chan||1, rate: AAC_RATES[freqIdx]||16000, headerLen: (d[1]&0x1) ? 7 : 9 };
+}
+function ascFor(objType, freqIdx, chan) {
+  return new Uint8Array([ (objType<<3)|(freqIdx>>1), ((freqIdx&1)<<7)|(chan<<3) ]);
+}
+function scheduleAudio(p, ad) {
+  const ctx = p.audioCtx; if (!ctx) { ad.close(); return; }
+  const buf = ctx.createBuffer(ad.numberOfChannels, ad.numberOfFrames, ad.sampleRate);
+  const tmp = new Float32Array(ad.numberOfFrames);
+  for (let c=0; c<ad.numberOfChannels; c++) { ad.copyTo(tmp, { planeIndex:c, format:'f32-planar' }); buf.copyToChannel(tmp, c); }
+  ad.close();
+  const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
+  const now = ctx.currentTime;
+  if (p.audioNext < now + 0.02) p.audioNext = now + 0.15; // small jitter buffer
+  src.start(p.audioNext); p.audioNext += buf.duration;
+}
+function handleAudio(p, data, ts) {
+  if (p.muted) return;
+  if (!p.audioCtx) p.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (p.audioCtx.state === 'suspended') p.audioCtx.resume();
+  const h = parseAdts(data); if (!h) return;
+  try {
+    if (!p.audioCfg || !p.audioDecoder || p.audioDecoder.state === 'closed') {
+      p.audioDecoder = new AudioDecoder({
+        output: (ad) => { if (!p.muted) scheduleAudio(p, ad); else ad.close(); },
+        error: (e) => log(`${p.label} audio error: ` + e.message, 'warn')
+      });
+      p.audioDecoder.configure({ codec:'mp4a.40.2', sampleRate:h.rate, numberOfChannels:h.chan,
+        description: ascFor(h.objType, h.freqIdx, h.chan) });
+      p.audioCfg = true; p.audioNext = 0;
+    }
+    if (p.audioDecoder.state === 'configured') {
+      p.audioDecoder.decode(new EncodedAudioChunk({ type:'key', timestamp: ts*1000, data: data.subarray(h.headerLen) }));
+    }
+  } catch (e) { log(`${p.label} audio frame error: ` + e.message, 'warn'); }
+}
+function playerForKey(k) { return k === 'pb' ? pbPlayer : (k === 'live1' ? live[1] : live[2]); }
+function setAudioKey(key) {
+  S.audioKey = (S.audioKey === key) ? null : key;
+  [['live1','#spk1'],['live2','#spk2'],['pb','#spkpb']].forEach(([k,sel]) => { const b=$(sel); if (b) b.textContent = (S.audioKey===k) ? '🔊' : '🔇'; });
+  ['live1','live2','pb'].forEach(k => { const p = playerForKey(k); if (p) p.muted = (S.audioKey !== k); });
+  log(S.audioKey ? ('audio → ' + S.audioKey) : 'audio off');
 }
 function drawFrame(p, frame) {
   if (p.canvas.width !== frame.displayWidth) { p.canvas.width = frame.displayWidth; p.canvas.height = frame.displayHeight; if (p.elRes) p.elRes.textContent = frame.displayWidth+'×'+frame.displayHeight; }
@@ -280,6 +330,7 @@ function openSocket(p, deviceId, channel) {
     const payloadType = buf[0], keyFrame = buf[1] === 1;
     const ts = Number(new DataView(ev.data).getBigUint64(2));
     const nal = buf.subarray(10);
+    if (payloadType !== 98 && payloadType !== 99) { handleAudio(p, nal, ts); return; } // audio (AAC=19)
     const h265 = payloadType === 99;
     try {
       if (p.dead) return;
@@ -305,6 +356,8 @@ function stopPlayer(p) {
   p.queue.forEach(x => { try { x.frame.close(); } catch(e){} }); p.queue = [];
   if (p.ws) { try { p.ws.close(); } catch(e){} }
   if (p.decoder && p.decoder.state !== 'closed') { try { p.decoder.close(); } catch(e){} }
+  if (p.audioDecoder && p.audioDecoder.state !== 'closed') { try { p.audioDecoder.close(); } catch(e){} }
+  if (p.audioCtx) { try { p.audioCtx.close(); } catch(e){} p.audioCtx = null; }
 }
 async function startStream(p, deviceId, channel, cmdType, extraAttrs) {
   const body = { deviceId, type:cmdType, attributes: Object.assign({ index:channel }, extraAttrs||{}) };
@@ -324,7 +377,7 @@ function liveStart(ch) {
   if (!deviceId) { log('Pick a device.', 'err'); return; }
   stopPlaybackAll(); // live and playback are mutually exclusive per channel on the camera
   if (live[ch]) stopPlayer(live[ch]);
-  const p = makePlayer($('#cv'+ch), { codec:$('#codec'+ch), fps:$('#fps'+ch), lat:$('#lat'+ch), res:$('#res'+ch), label:'CH'+ch },
+  const p = makePlayer($('#cv'+ch), { codec:$('#codec'+ch), fps:$('#fps'+ch), lat:$('#lat'+ch), res:$('#res'+ch), label:'CH'+ch, key:'live'+ch },
     Math.max(0, Number($('#buffer').value) || 0));
   live[ch] = p;
   startStream(p, deviceId, ch, 'videoStart', { streamType:Number($('#streamType').value) });
@@ -368,7 +421,7 @@ function pbPlay() {
   const sc = speedCodes();
   log(`Playback CH${ch} from ${fmt(min)} on ${date} at ${sc.mult}x`);
   const go = () => {
-    const p = makePlayer($('#pcv1'), { fps:$('#pfps1'), lat:$('#pbuf1'), res:$('#pres1'), label:'PB CH'+ch }, 200);
+    const p = makePlayer($('#pcv1'), { fps:$('#pfps1'), lat:$('#pbuf1'), res:$('#pres1'), label:'PB CH'+ch, key:'pb' }, 200);
     pbPlayer = p; pbActiveCh = ch;
     startStream(p, deviceId, ch, 'videoPlayback', { startTime:startIso, endTime:endIso, playbackMode:sc.playbackMode, playbackSpeed:sc.playbackSpeed });
     pbAdvanceStart(min, sc.mult);
@@ -492,6 +545,9 @@ $('#stopAll').onclick = () => { liveStop(1); liveStop(2); };
 document.querySelectorAll('[data-startch]').forEach(b => b.onclick = () => liveStart(Number(b.dataset.startch)));
 document.querySelectorAll('[data-stopch]').forEach(b => b.onclick = () => liveStop(Number(b.dataset.stopch)));
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchTab(t.dataset.tab));
+$('#spk1').onclick = () => setAudioKey('live1');
+$('#spk2').onclick = () => setAudioKey('live2');
+$('#spkpb').onclick = () => setAudioKey('pb');
 $('#remember').onchange = saveCreds;
 $('#pbChannel').onchange = () => { const v = $('#pbChannel').value; $('#pbChLabel').textContent = 'Channel ' + v + (v==='1'?' (road)':' (cabin)'); };
 $('#pbQuery').onclick = pbQuery;
