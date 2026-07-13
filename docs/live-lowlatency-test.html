@@ -97,7 +97,7 @@
       <label>Channel (one at a time — camera limit)</label>
       <select id="pbChannel"><option value="1">1 (road)</option><option value="2">2 (cabin)</option></select>
       <label>Date</label><input id="pbDate" type="date">
-      <div class="btns"><button class="primary" id="pbQuery">Load timeline (activity + events)</button></div>
+      <div class="btns"><button class="primary" id="pbQuery">Load recordings</button></div>
       <label style="margin-top:12px">Speed</label>
       <select id="pbSpeed"><option value="1">1x</option><option value="2">2x</option><option value="4">4x</option><option value="8">8x</option></select>
       <div class="btns">
@@ -141,7 +141,7 @@
         <div class="tl-track" id="tlTrack"></div>
         <div class="tl-labels" id="tlLabels"></div>
         <div class="legend">
-          <span><span class="sw" style="background:linear-gradient(180deg,#3a8f5a,#256b3f)"></span>Ignition on / moving</span>
+          <span><span class="sw" style="background:linear-gradient(180deg,#3a8f5a,#256b3f)"></span>Recorded video</span>
           <span><span class="sw" style="background:var(--warn)"></span>Event</span>
           <span><span class="sw" style="background:var(--err)"></span>Alarm / playhead</span>
           <span class="muted">click an event to play from there</span>
@@ -493,49 +493,55 @@ function initTimeline() {
 
 // ---- Build the timeline from Traccar's own history (the JC181 has no recording list) ----
 function dateMinutes(iso) { const d = new Date(iso); return d.getHours()*60 + d.getMinutes() + d.getSeconds()/60; }
-function posActive(p) {
-  const a = p.attributes || {};
-  if (a.ignition !== undefined) return a.ignition === true;
-  if (a.motion !== undefined) return a.motion === true;
-  return (p.speed || 0) > 0.5;
-}
 function eventLabel(ev) {
   if (ev.type === 'alarm') return 'alarm: ' + ((ev.attributes || {}).alarm || '');
   return ev.type;
 }
-function buildTimeline(positions, events) {
-  positions.sort((a, b) => new Date(a.fixTime || a.deviceTime) - new Date(b.fixTime || b.deviceTime));
-  const GAP = 8; // minutes; active positions within this gap join one band
-  const bands = []; let cur = null;
-  positions.forEach(p => {
-    if (!posActive(p)) { cur = null; return; }
-    const m = dateMinutes(p.fixTime || p.deviceTime);
-    if (cur && m - cur[1] <= GAP) cur[1] = m; else { cur = [m, m]; bands.push(cur); }
-  });
-  PB_SEGMENTS = bands;
-  const NOISE = new Set(['queuedCommandSent', 'commandResult', 'media', 'textMessage']);
-  PB_EVENTS = (events || []).filter(ev => !NOISE.has(ev.type)).map(ev => ({
-    min: dateMinutes(ev.eventTime || ev.serverTime),
-    label: eventLabel(ev),
-    alarm: ev.type === 'alarm'
-  }));
+let PB_ALL = [];  // all recorded clips from the camera: {channel, s, e} minutes-of-day
+function refilterTimeline() {
+  const ch = Number($('#pbChannel').value);
+  PB_SEGMENTS = PB_ALL.filter(x => x.channel === ch).map(x => [x.s, x.e]);
   renderTimeline();
 }
-async function pbQuery() {   // "Load timeline"
+async function pbQuery() {   // "Load recordings"
   if (!S.token) { log('Connect first.', 'err'); return; }
   const deviceId = Number($('#device').value);
   if (!deviceId) { log('Pick a device.', 'err'); return; }
   const date = $('#pbDate').value;
   const from = encodeURIComponent(localIso(date, 0)), to = encodeURIComponent(localIso(date, 1440));
-  log('Loading positions + events for ' + date + '…');
+  // event markers from Traccar's own history (harsh braking, alarms, …)
   try {
-    const rp = await api(`/api/reports/route?deviceId=${deviceId}&from=${from}&to=${to}`);
-    const positions = rp.ok ? await rp.json() : [];
     const re = await api(`/api/reports/events?deviceId=${deviceId}&from=${from}&to=${to}&type=allEvents`);
     const events = re.ok ? await re.json() : [];
-    buildTimeline(positions, events);
-    log(`Loaded ${positions.length} positions, ${events.length} events → ${PB_SEGMENTS.length} activity band(s), ${PB_EVENTS.length} marker(s).`, 'ok');
-  } catch (e) { log('Load error: ' + e.message, 'err'); }
+    const NOISE = new Set(['queuedCommandSent', 'commandResult', 'media', 'textMessage']);
+    PB_EVENTS = events.filter(ev => !NOISE.has(ev.type)).map(ev => ({
+      min: dateMinutes(ev.eventTime || ev.serverTime), label: eventLabel(ev), alarm: ev.type === 'alarm' }));
+  } catch (e) { PB_EVENTS = []; }
+  // recorded spans from the camera (videoResources -> async reply on a position)
+  await sendCmd('videoResources', 0, { startTime: localIso(date, 0), endTime: localIso(date, 1440) });
+  log('Querying camera recordings for ' + date + '…');
+  const deadline = Date.now() + 20000;
+  const poll = async () => {
+    try {
+      const r = await api('/api/positions?deviceId=' + deviceId);
+      if (r.ok) {
+        for (const p of await r.json()) {
+          const vr = (p.attributes || {}).videoResources;
+          if (vr !== undefined) {
+            const list = JSON.parse(vr);
+            PB_ALL = list.map(x => ({ channel: x.channel, s: dateMinutes(x.startTime), e: dateMinutes(x.endTime) }))
+                         .filter(x => x.e >= x.s);
+            refilterTimeline();
+            log(`Camera recordings: ${list.length} clip(s) total; ${PB_SEGMENTS.length} on CH${$('#pbChannel').value}, ${PB_EVENTS.length} event(s).`, 'ok');
+            return;
+          }
+        }
+      }
+    } catch (e) {}
+    if (Date.now() < deadline) setTimeout(poll, 1500);
+    else log('No recording list (none for that day, or camera busy).', 'err');
+  };
+  setTimeout(poll, 1500);
 }
 
 // ================= wiring =================
@@ -549,7 +555,7 @@ $('#spk1').onclick = () => setAudioKey('live1');
 $('#spk2').onclick = () => setAudioKey('live2');
 $('#spkpb').onclick = () => setAudioKey('pb');
 $('#remember').onchange = saveCreds;
-$('#pbChannel').onchange = () => { const v = $('#pbChannel').value; $('#pbChLabel').textContent = 'Channel ' + v + (v==='1'?' (road)':' (cabin)'); };
+$('#pbChannel').onchange = () => { const v = $('#pbChannel').value; $('#pbChLabel').textContent = 'Channel ' + v + (v==='1'?' (road)':' (cabin)'); refilterTimeline(); };
 $('#pbQuery').onclick = pbQuery;
 $('#pbPlay').onclick = pbPlay;
 $('#pbPause').onclick = pbPause;
