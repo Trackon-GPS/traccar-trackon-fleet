@@ -53,12 +53,19 @@ public class VideoStreamManager {
         }
     }
 
+    public void resetStream(long deviceId, int channel) {
+        DeviceStream stream = streams.get(deviceId + "_" + channel);
+        if (stream != null) {
+            stream.reset();
+        }
+    }
+
     public ByteBuf getSegment(long deviceId, int channel, int index) {
         DeviceStream stream = streams.get(deviceId + "_" + channel);
         return stream != null ? stream.getSegment(index) : null;
     }
 
-    private record Segment(ByteBuf data, double duration) { }
+    private record Segment(ByteBuf data, double duration, boolean discontinuity) { }
 
     static class DeviceStream {
 
@@ -69,6 +76,23 @@ public class VideoStreamManager {
         private long firstTimestamp;
         private long segmentStartTimestamp;
         private long lastTimestamp;
+        private boolean pendingDiscontinuity;
+
+        synchronized void reset() {
+            if (currentSegment != null) {
+                currentSegment.release();
+                currentSegment = null;
+            }
+            for (Segment segment : segments.values()) {
+                segment.data().release();
+            }
+            segments.clear();
+            firstTimestamp = 0;
+            segmentStartTimestamp = 0;
+            lastTimestamp = 0;
+            pendingDiscontinuity = true;
+            // segmentIndex is kept monotonic so the media sequence never goes backwards
+        }
 
         synchronized void addFrame(ByteBuf nalData, long timestamp, boolean isKeyFrame, int payloadType) {
             // Only cut a segment on a keyframe, so every segment starts with a keyframe + PAT/PMT
@@ -94,7 +118,8 @@ public class VideoStreamManager {
 
         private void finalizeSegment() {
             double duration = Math.max(0.1, (lastTimestamp - segmentStartTimestamp) / 1000.0);
-            segments.put(segmentIndex++, new Segment(currentSegment, duration));
+            segments.put(segmentIndex++, new Segment(currentSegment, duration, pendingDiscontinuity));
+            pendingDiscontinuity = false;
             currentSegment = null;
 
             while (segments.size() > MAX_SEGMENTS) {
@@ -131,6 +156,9 @@ public class VideoStreamManager {
             sb.append("#EXT-X-MEDIA-SEQUENCE:").append(firstIndex).append("\n");
 
             for (var entry : segments.entrySet()) {
+                if (entry.getValue().discontinuity()) {
+                    sb.append("#EXT-X-DISCONTINUITY\n");
+                }
                 sb.append(String.format(java.util.Locale.US, "#EXTINF:%.3f,\n", entry.getValue().duration()));
                 sb.append(entry.getKey()).append(".ts\n");
             }

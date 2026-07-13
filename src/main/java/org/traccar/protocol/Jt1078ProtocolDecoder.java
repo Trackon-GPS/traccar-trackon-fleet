@@ -42,6 +42,7 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
 
     private long streamDeviceId;
     private int streamChannel;
+    private boolean streamInitialized;
 
     public Jt1078ProtocolDecoder(Protocol protocol) {
         super(protocol);
@@ -93,6 +94,13 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
 
         streamDeviceId = device.getId();
         streamChannel = videoChannel;
+
+        // A new connection means a new session (live start or playback/seek); reset the timeline
+        // so recorded frames are not anchored to a previous session's PTS or mixed with its segments.
+        if (!streamInitialized) {
+            streamManager.resetStream(streamDeviceId, videoChannel);
+            streamInitialized = true;
+        }
 
         ByteBuf body = buf.readRetainedSlice(bodyLength);
 
