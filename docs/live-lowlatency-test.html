@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>JC181 Video Test</title>
 <style>
-  :root { --bg:#0f1720; --card:#17212b; --line:#26333f; --fg:#e6edf3; --mut:#8b98a5; --accent:#2f81f7; --ok:#2ea043; --err:#f85149; --seg:#2f81f7; }
+  :root { --bg:#0f1720; --card:#17212b; --line:#26333f; --fg:#e6edf3; --mut:#8b98a5; --accent:#2f81f7; --ok:#2ea043; --err:#f85149; --warn:#d29922; --seg:#2f81f7; }
   * { box-sizing:border-box; }
   body { margin:0; font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--fg); }
   header { display:flex; align-items:center; gap:22px; padding:12px 18px; background:var(--card); border-bottom:1px solid var(--line); }
@@ -43,7 +43,10 @@
   .tl-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
   .tl-time { font-family:ui-monospace,Menlo,monospace; font-size:22px; font-weight:600; }
   .tl-track { position:relative; height:48px; background:#0d1117; border:1px solid var(--line); border-radius:6px; overflow:hidden; cursor:crosshair; user-select:none; }
-  .tl-seg { position:absolute; top:7px; bottom:7px; background:linear-gradient(180deg,#4c9bff,#1f5fbf); border-radius:2px; }
+  .tl-seg { position:absolute; top:7px; bottom:7px; background:linear-gradient(180deg,#3a8f5a,#256b3f); border-radius:2px; }
+  .tl-event { position:absolute; top:2px; bottom:2px; width:2px; background:var(--warn); cursor:pointer; opacity:.85; }
+  .tl-event.alarm { background:var(--err); width:3px; }
+  .tl-event:hover { opacity:1; box-shadow:0 0 5px currentColor; }
   .tl-tick { position:absolute; top:0; bottom:0; width:1px; background:rgba(255,255,255,.07); }
   .tl-playhead { position:absolute; top:-2px; bottom:-2px; width:2px; background:var(--err); }
   .tl-playhead::before { content:''; position:absolute; top:-1px; left:-5px; border:6px solid transparent; border-top-color:var(--err); }
@@ -91,8 +94,10 @@
     <!-- PLAYBACK controls -->
     <div class="card pane-playback" hidden>
       <h2>Playback</h2>
+      <label>Channel (one at a time — camera limit)</label>
+      <select id="pbChannel"><option value="1">1 (road)</option><option value="2">2 (cabin)</option></select>
       <label>Date</label><input id="pbDate" type="date">
-      <div class="btns"><button class="primary" id="pbQuery">Query recordings</button></div>
+      <div class="btns"><button class="primary" id="pbQuery">Load timeline (activity + events)</button></div>
       <label style="margin-top:12px">Speed</label>
       <select id="pbSpeed"><option value="1">1x</option><option value="2">2x</option><option value="4">4x</option><option value="8">8x</option></select>
       <div class="btns">
@@ -100,7 +105,7 @@
         <button id="pbPause">⏸ Pause</button>
         <button class="stop" id="pbStop">■ Stop</button>
       </div>
-      <div class="muted" style="margin-top:10px">UI preview — recordings shown are mock data until wired to the device.</div>
+      <div class="muted" style="margin-top:10px">Drag the timeline to a time, pick a channel, then Play.</div>
     </div>
   </div>
 
@@ -121,15 +126,12 @@
       </div>
     </div>
 
-    <!-- PLAYBACK view -->
+    <!-- PLAYBACK view (single channel — camera serves one playback stream at a time) -->
     <div class="pane-playback" hidden>
-      <div class="players">
-        <div class="card player"><h2>Channel 1 (road)</h2><canvas id="pcv1" width="1280" height="720"></canvas>
-          <div class="stats"><div>FPS <b id="pfps1">0</b></div><div>Buf <b id="pbuf1">—</b></div><div>Res <b id="pres1">—</b></div></div>
-        </div>
-        <div class="card player"><h2>Channel 2 (cabin)</h2><canvas id="pcv2" width="1280" height="720"></canvas>
-          <div class="stats"><div>FPS <b id="pfps2">0</b></div><div>Buf <b id="pbuf2">—</b></div><div>Res <b id="pres2">—</b></div></div>
-        </div>
+      <div class="card player" style="max-width:680px">
+        <h2>Playback — <span id="pbChLabel">Channel 1 (road)</span></h2>
+        <canvas id="pcv1" width="1280" height="720"></canvas>
+        <div class="stats"><div>FPS <b id="pfps1">0</b></div><div>Buf <b id="pbuf1">—</b></div><div>Res <b id="pres1">—</b></div></div>
       </div>
       <div class="card">
         <div class="tl-head">
@@ -139,9 +141,10 @@
         <div class="tl-track" id="tlTrack"></div>
         <div class="tl-labels" id="tlLabels"></div>
         <div class="legend">
-          <span><span class="sw" style="background:linear-gradient(180deg,#4c9bff,#1f5fbf)"></span>Recorded video</span>
-          <span><span class="sw" style="background:#0d1117;border:1px solid var(--line)"></span>No video</span>
-          <span><span class="sw" style="background:var(--err)"></span>Playhead</span>
+          <span><span class="sw" style="background:linear-gradient(180deg,#3a8f5a,#256b3f)"></span>Ignition on / moving</span>
+          <span><span class="sw" style="background:var(--warn)"></span>Event</span>
+          <span><span class="sw" style="background:var(--err)"></span>Alarm / playhead</span>
+          <span class="muted">click an event to play from there</span>
         </div>
       </div>
     </div>
@@ -153,7 +156,8 @@
 const $ = s => document.querySelector(s);
 const S = { base:'', auth:'', token:'' };
 const live = {};   // channel -> player
-const pb = {};     // channel -> player
+let pbPlayer = null;   // single playback player (camera serves one playback stream at a time)
+let pbActiveCh = 0;    // camera channel currently being played back
 
 function log(m, c='') { const e=$('#log'); e.innerHTML += `<span class="log-${c||'mut'}">[${new Date().toLocaleTimeString()}] ${m}</span>\n`; e.scrollTop=e.scrollHeight; }
 function api(path, opts={}) {
@@ -332,7 +336,14 @@ function liveStop(ch) {
 }
 // Stop all of one mode (closes sockets AND tells the camera to stop that channel's stream)
 function stopLiveAll() { let any=false; [1,2].forEach(ch => { if (live[ch]) { stopPlayer(live[ch]); delete live[ch]; sendCmd('videoStop', ch).catch(()=>{}); any=true; } }); return any; }
-function stopPlaybackAll() { pbAdvanceStop(); let any=false; [1,2].forEach(ch => { if (pb[ch]) { stopPlayer(pb[ch]); delete pb[ch]; sendCmd('videoStop', ch).catch(()=>{}); any=true; } }); return any; }
+function stopPlaybackAll() {
+  pbAdvanceStop();
+  const was = pbActiveCh;
+  if (pbPlayer) { stopPlayer(pbPlayer); pbPlayer = null; }
+  if (was) sendCmd('videoStop', was).catch(()=>{});
+  pbActiveCh = 0;
+  return !!was;
+}
 
 // ---- PLAYBACK ----
 function localIso(dateStr, minutes) {
@@ -344,33 +355,28 @@ function speedCodes() {
   if (mult <= 1) return { playbackMode:0, playbackSpeed:0, mult:1 };
   return { playbackMode:1, playbackSpeed:{2:2,4:3,8:4}[mult]||2, mult };
 }
-function pbStartChannel(ch, startIso, endIso, sc) {
-  const deviceId = Number($('#device').value);
-  if (pb[ch]) stopPlayer(pb[ch]);
-  const p = makePlayer($('#pcv'+ch), { fps:$('#pfps'+ch), lat:$('#pbuf'+ch), res:$('#pres'+ch), label:'PB CH'+ch }, 200);
-  pb[ch] = p;
-  startStream(p, deviceId, ch, 'videoPlayback', { startTime:startIso, endTime:endIso, playbackMode:sc.playbackMode, playbackSpeed:sc.playbackSpeed });
-}
 function pbPlay() {
   if (!S.token) { log('Connect first.', 'err'); return; }
   const deviceId = Number($('#device').value);
   if (!deviceId) { log('Pick a device.', 'err'); return; }
-  const hadLive = stopLiveAll(); // stop live first so the camera isn't streaming both on a channel
+  const hadLive = stopLiveAll();   // live and playback can't run together on the camera
+  stopPlaybackAll();               // one playback stream at a time
+  const ch = Number($('#pbChannel').value);
   const date = $('#pbDate').value;
   const min = playheadMinutes();
   const startIso = localIso(date, min), endIso = localIso(date, 1440);
   const sc = speedCodes();
-  log(`Playback from ${fmt(min)} on ${date} at ${sc.mult}x`);
-  const go = () => { pbStartChannel(1, startIso, endIso, sc); pbStartChannel(2, startIso, endIso, sc); pbAdvanceStart(min, sc.mult); };
-  if (hadLive) setTimeout(go, 600); else go(); // let the camera close the live stream before playback
+  log(`Playback CH${ch} from ${fmt(min)} on ${date} at ${sc.mult}x`);
+  const go = () => {
+    const p = makePlayer($('#pcv1'), { fps:$('#pfps1'), lat:$('#pbuf1'), res:$('#pres1'), label:'PB CH'+ch }, 200);
+    pbPlayer = p; pbActiveCh = ch;
+    startStream(p, deviceId, ch, 'videoPlayback', { startTime:startIso, endTime:endIso, playbackMode:sc.playbackMode, playbackSpeed:sc.playbackSpeed });
+    pbAdvanceStart(min, sc.mult);
+  };
+  if (hadLive) setTimeout(go, 600); else go(); // let the camera close the live stream first
 }
-function pbPause() { [1,2].forEach(ch => sendCmd('videoPause', ch).catch(()=>{})); pbAdvanceStop(); log('Playback paused.'); }
-function pbResumeCmd() { [1,2].forEach(ch => sendCmd('videoResume', ch).catch(()=>{})); log('Playback resumed.'); }
-function pbStop() {
-  [1,2].forEach(ch => { if (pb[ch]) { stopPlayer(pb[ch]); delete pb[ch]; } sendCmd('videoStop', ch).catch(()=>{}); });
-  pbAdvanceStop();
-  log('Playback stopped.');
-}
+function pbPause() { if (pbActiveCh) sendCmd('videoPause', pbActiveCh).catch(()=>{}); pbAdvanceStop(); log('Playback paused.'); }
+function pbStop() { stopPlaybackAll(); log('Playback stopped.'); }
 
 // ---- playhead auto-advance during playback ----
 let pbTimer=null, pbAnchorMin=0, pbAnchorWall=0, pbMult=1;
@@ -389,14 +395,21 @@ function switchTab(name) {
 }
 
 // ================= Playback timeline =================
-let PB_SEGMENTS = [[372,468],[510,552],[726,833],[1042,1140]]; // mock until queried; minutes-of-day [start,end]
+let PB_SEGMENTS = [];   // activity bands (ignition on / moving), minutes-of-day [start,end]
+let PB_EVENTS = [];     // event markers: {min, label, alarm}
 const fmt = m => { m=Math.max(0,Math.min(1440,m)); const h=Math.floor(m/60), mm=Math.floor(m%60); return String(h).padStart(2,'0')+':'+String(mm).padStart(2,'0'); };
 
 function renderTimeline() {
   const track = $('#tlTrack'); if (!track) return;
   track.innerHTML = '';
-  PB_SEGMENTS.forEach(([s,e]) => { const d=document.createElement('div'); d.className='tl-seg'; d.style.left=(s/1440*100)+'%'; d.style.width=(Math.max(0.4,(e-s)/1440*100))+'%'; track.appendChild(d); });
+  PB_SEGMENTS.forEach(([s,e]) => { const d=document.createElement('div'); d.className='tl-seg'; d.style.left=(s/1440*100)+'%'; d.style.width=(Math.max(0.3,(e-s)/1440*100))+'%'; track.appendChild(d); });
   for (let h=1; h<24; h++) { const t=document.createElement('div'); t.className='tl-tick'; t.style.left=(h/24*100)+'%'; track.appendChild(t); }
+  PB_EVENTS.forEach(ev => {
+    const m=document.createElement('div'); m.className='tl-event'+(ev.alarm?' alarm':'');
+    m.style.left=(ev.min/1440*100)+'%'; m.title=fmt(ev.min)+' — '+ev.label;
+    m.addEventListener('pointerdown', e => { e.stopPropagation(); setPlayheadMinutes(ev.min); pbPlay(); });
+    track.appendChild(m);
+  });
   const ph=document.createElement('div'); ph.className='tl-playhead'; ph.id='tlPlayhead'; ph.style.left=(Number(track.dataset.pos||0))+'%'; track.appendChild(ph);
   const lab=$('#tlLabels'); lab.innerHTML=''; for (let h=0; h<=24; h+=3) { const s=document.createElement('span'); s.textContent=String(h).padStart(2,'0'); lab.appendChild(s); }
 }
@@ -418,43 +431,58 @@ function initTimeline() {
   const track=$('#tlTrack');
   track.addEventListener('pointerdown', e => { pbAdvanceStop(); tlDrag=true; setPlayhead(e.clientX); });
   window.addEventListener('pointermove', e => { if (tlDrag) setPlayhead(e.clientX); });
-  window.addEventListener('pointerup', () => { tlDrag=false; });
+  window.addEventListener('pointerup', () => {
+    if (!tlDrag) return;
+    tlDrag = false;
+    if (pbActiveCh) pbPlay(); // seek: restart playback from the dragged-to time
+  });
 }
 
-// ---- query recordings -> real timeline ----
-async function pbQuery() {
+// ---- Build the timeline from Traccar's own history (the JC181 has no recording list) ----
+function dateMinutes(iso) { const d = new Date(iso); return d.getHours()*60 + d.getMinutes() + d.getSeconds()/60; }
+function posActive(p) {
+  const a = p.attributes || {};
+  if (a.ignition !== undefined) return a.ignition === true;
+  if (a.motion !== undefined) return a.motion === true;
+  return (p.speed || 0) > 0.5;
+}
+function eventLabel(ev) {
+  if (ev.type === 'alarm') return 'alarm: ' + ((ev.attributes || {}).alarm || '');
+  return ev.type;
+}
+function buildTimeline(positions, events) {
+  positions.sort((a, b) => new Date(a.fixTime || a.deviceTime) - new Date(b.fixTime || b.deviceTime));
+  const GAP = 8; // minutes; active positions within this gap join one band
+  const bands = []; let cur = null;
+  positions.forEach(p => {
+    if (!posActive(p)) { cur = null; return; }
+    const m = dateMinutes(p.fixTime || p.deviceTime);
+    if (cur && m - cur[1] <= GAP) cur[1] = m; else { cur = [m, m]; bands.push(cur); }
+  });
+  PB_SEGMENTS = bands;
+  const NOISE = new Set(['queuedCommandSent', 'commandResult', 'media', 'textMessage']);
+  PB_EVENTS = (events || []).filter(ev => !NOISE.has(ev.type)).map(ev => ({
+    min: dateMinutes(ev.eventTime || ev.serverTime),
+    label: eventLabel(ev),
+    alarm: ev.type === 'alarm'
+  }));
+  renderTimeline();
+}
+async function pbQuery() {   // "Load timeline"
   if (!S.token) { log('Connect first.', 'err'); return; }
   const deviceId = Number($('#device').value);
   if (!deviceId) { log('Pick a device.', 'err'); return; }
   const date = $('#pbDate').value;
-  await sendCmd('videoResources', 0, { startTime:localIso(date,0), endTime:localIso(date,1440) });
-  log('Querying recordings… (waiting for camera reply)');
-  const deadline = Date.now() + 20000;
-  const poll = async () => {
-    try {
-      const r = await api('/api/positions?deviceId=' + deviceId);
-      if (r.ok) {
-        const ps = await r.json();
-        for (const p of ps) {
-          if (p.attributes && p.attributes.videoResources) {
-            applyResources(JSON.parse(p.attributes.videoResources), date);
-            return;
-          }
-        }
-      }
-    } catch (e) {}
-    if (Date.now() < deadline) setTimeout(poll, 2000);
-    else log('No recordings list within 20s (none in range, or timezone/attribute mismatch).', 'err');
-  };
-  setTimeout(poll, 2000);
-}
-function dateMinutes(iso) { const d = new Date(iso); return d.getHours()*60 + d.getMinutes() + d.getSeconds()/60; }
-function applyResources(list, date) {
-  let segs = list.filter(x => x.channel === 1);
-  if (!segs.length) segs = list;
-  PB_SEGMENTS = segs.map(x => [dateMinutes(x.startTime), dateMinutes(x.endTime)]).filter(([s,e]) => e >= s);
-  renderTimeline();
-  log(`Recordings received: ${PB_SEGMENTS.length} segment(s).`, 'ok');
+  const from = encodeURIComponent(localIso(date, 0)), to = encodeURIComponent(localIso(date, 1440));
+  log('Loading positions + events for ' + date + '…');
+  try {
+    const rp = await api(`/api/reports/route?deviceId=${deviceId}&from=${from}&to=${to}`);
+    const positions = rp.ok ? await rp.json() : [];
+    const re = await api(`/api/reports/events?deviceId=${deviceId}&from=${from}&to=${to}&type=allEvents`);
+    const events = re.ok ? await re.json() : [];
+    buildTimeline(positions, events);
+    log(`Loaded ${positions.length} positions, ${events.length} events → ${PB_SEGMENTS.length} activity band(s), ${PB_EVENTS.length} marker(s).`, 'ok');
+  } catch (e) { log('Load error: ' + e.message, 'err'); }
 }
 
 // ================= wiring =================
@@ -465,6 +493,7 @@ document.querySelectorAll('[data-startch]').forEach(b => b.onclick = () => liveS
 document.querySelectorAll('[data-stopch]').forEach(b => b.onclick = () => liveStop(Number(b.dataset.stopch)));
 document.querySelectorAll('.tab').forEach(t => t.onclick = () => switchTab(t.dataset.tab));
 $('#remember').onchange = saveCreds;
+$('#pbChannel').onchange = () => { const v = $('#pbChannel').value; $('#pbChLabel').textContent = 'Channel ' + v + (v==='1'?' (road)':' (cabin)'); };
 $('#pbQuery').onclick = pbQuery;
 $('#pbPlay').onclick = pbPlay;
 $('#pbPause').onclick = pbPause;
