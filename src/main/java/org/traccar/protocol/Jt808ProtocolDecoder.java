@@ -136,9 +136,6 @@ public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
         data.release();
         buf.writeByte(Checksum.xor(buf.nioBuffer(1, buf.readableBytes() - 1)));
         buf.writeByte(delimiter);
-        if (type == MSG_VIDEO_QUERY || type == MSG_VIDEO_PLAYBACK) {
-            LOGGER.info("JT808 diag => 0x{} {}", Integer.toHexString(type), ByteBufUtil.hexDump(buf));
-        }
         return buf;
     }
 
@@ -350,13 +347,8 @@ public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
             }
         }
 
-        int type = buf.getUnsignedShort(buf.readerIndex() + 1);
-        if (type == MSG_VIDEO_RESOURCE_LIST || type == MSG_TERMINAL_GENERAL_RESPONSE) {
-            LOGGER.info("JT808 diag <= 0x{} {}", Integer.toHexString(type), ByteBufUtil.hexDump(buf));
-        }
-
         delimiter = buf.readUnsignedByte();
-        type = buf.readUnsignedShort();
+        int type = buf.readUnsignedShort();
         int attribute = buf.readUnsignedShort();
 
         int bodyLength = BitUtil.to(attribute, 10);
@@ -603,14 +595,10 @@ public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
         // stamp a fresh time so this attribute-only position is broadcast as the latest
         getLastLocation(position, new Date());
 
-        String raw = ByteBufUtil.hexDump(buf, buf.readerIndex(), buf.readableBytes());
-        position.set("videoResourcesRaw", raw);
-
         StringBuilder json = new StringBuilder("[");
-        long count = 0;
         try {
             buf.readUnsignedShort(); // query serial number
-            count = buf.readUnsignedInt();
+            long count = buf.readUnsignedInt();
             TimeZone timeZone = deviceSession.get(DeviceSession.KEY_TIMEZONE);
             for (long i = 0; i < count && buf.readableBytes() >= 28; i++) {
                 if (json.length() > 1) {
@@ -630,13 +618,11 @@ public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
                         channel, start.toInstant(), end.toInstant(), mediaType, streamType, memoryType, size));
             }
         } catch (Exception e) {
-            LOGGER.warn("videoResources parse error (raw={})", raw, e);
+            LOGGER.warn("Video resource list parse error", e);
         }
         json.append(']');
 
-        position.set("videoResourcesCount", count);
         position.set("videoResources", json.toString());
-        LOGGER.info("JT808 diag videoResources parsed count={} json.len={}", count, json.length());
 
         return position;
     }

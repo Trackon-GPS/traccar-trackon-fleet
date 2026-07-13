@@ -158,7 +158,68 @@ pause/resume/stop = videoPause / videoResume / videoStop
 
 ---
 
-## 8. Quick reference
+## 8. Suggested UI design
+
+Mirror the reference web demo, adapted for a phone (portrait). Two screens: **Live** and **Playback**,
+switched by a top segmented control or bottom tabs. A device picker (camera devices only) sits above both.
+
+### Live screen — dual channel
+```
+┌──────────────────────────────┐
+│  [ Vehicle / camera  ▼ ]     │   device picker (camera=true)
+├──────────────────────────────┤
+│  CH1 · road         🔊  ⤢    │   header: label · mute · fullscreen
+│  ┌──────────────────────────┐│
+│  │        live video        ││   16:9, tap = fullscreen
+│  └──────────────────────────┘│
+│  CH2 · cabin        🔇  ⤢    │
+│  ┌──────────────────────────┐│
+│  │        live video        ││
+│  └──────────────────────────┘│
+├──────────────────────────────┤
+│      ▶ Start        ■ Stop    │
+└──────────────────────────────┘
+```
+- Two 16:9 windows stacked (portrait) or side-by-side (landscape).
+- Per-window **mute** (🔊/🔇) — only one channel's audio at a time; tapping one un-mutes it and mutes the other.
+- **Tap a window → fullscreen** (landscape), pinch nothing fancy needed.
+- Show a small status/latency chip while connecting ("connecting…", then hide).
+- Auto-`videoStop` when leaving the screen.
+
+### Playback screen — single channel + timeline
+```
+┌──────────────────────────────┐
+│  [ Camera ▼ ]  [ CH1 ▼ ]     │   device + channel picker
+│  [ 2026-07-13  📅 ]  Load     │   date + "Load recordings"
+├──────────────────────────────┤
+│  ┌──────────────────────────┐│
+│  │      playback video      ││   16:9, tap = fullscreen
+│  └──────────────────────────┘│
+│        20:14:30    🔊         │   current time (from watermark/seek) + mute
+├──────────────────────────────┤
+│  ⏮   ▶/⏸   ⏭      1x ▼        │   transport + speed
+│  ┌──────────────────────────┐│
+│  │▓▓▓  ▓▓▓▓▓   ● ▓▓▓▓  ▓▓▓▓ ││   24h TIMELINE:
+│  └───────────────▲──────────┘│     ▓ = recorded span, ● = event marker
+│  00   06   12   18   24       │     ▲ = draggable playhead
+└──────────────────────────────┘
+```
+- **Timeline** is the centerpiece: a 24-hour bar with **filled spans = recorded footage** (from `videoResources`, per selected channel) and **dots = events** (from Traccar events; tap to jump). Empty = no footage.
+- **Drag the playhead** onto a recorded span and release → seek (re-send `videoPlayback`). Show a brief "seeking…".
+- **Pinch-zoom the timeline** (e.g. 24h → 1h) for precise seeking on long days — optional but nice.
+- **Speed** control maps to `playbackMode`/`playbackSpeed` (changing speed re-issues playback).
+- **Single channel only** — the channel picker swaps which channel plays and re-filters the timeline spans.
+- Color the current-time label green when the playhead is over a recorded span, gray over a gap (so users don't seek into nothing).
+
+### Cross-cutting
+- **One media surface per channel**; tear down and stop cleanly on navigation.
+- **Reconnect** the media WebSocket with backoff if it drops; re-issue the last `videoStart`/`videoPlayback`.
+- **Errors**: "camera offline" (command returned 202), "no footage for this day", decoder failures → show a retry.
+- **Landscape/fullscreen** should hide chrome and letterbox the 16:9 video.
+
+---
+
+## 9. Quick reference
 
 | Purpose | Call |
 |---------|------|
