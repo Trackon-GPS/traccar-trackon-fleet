@@ -33,6 +33,7 @@ public class VideoStreamManager {
 
     private final Map<String, DeviceStream> streams = new ConcurrentHashMap<>();
     private final Map<String, Set<FrameListener>> subscribers = new ConcurrentHashMap<>();
+    private final Map<String, Object> activeSource = new ConcurrentHashMap<>();
 
     @Inject
     public VideoStreamManager() {}
@@ -57,8 +58,27 @@ public class VideoStreamManager {
         }
     }
 
+    /**
+     * Marks the given source (a JT1078 connection) as the current one for a device/channel.
+     * The camera may leave an old connection open when a new stream is requested (e.g. switching
+     * between live and playback), so only the most recent source's frames are delivered.
+     */
+    public void setActiveSource(long deviceId, int channel, Object source) {
+        activeSource.put(deviceId + "_" + channel, source);
+    }
+
+    public void clearActiveSource(long deviceId, int channel, Object source) {
+        activeSource.remove(deviceId + "_" + channel, source);
+    }
+
     public void handleFrame(
-            long deviceId, int channel, ByteBuf nalData, long timestamp, boolean isKeyFrame, int payloadType) {
+            long deviceId, int channel, Object source,
+            ByteBuf nalData, long timestamp, boolean isKeyFrame, int payloadType) {
+        Object active = activeSource.get(deviceId + "_" + channel);
+        if (active != null && active != source) {
+            return; // frame from a superseded connection (e.g. lingering playback) — drop it
+        }
+
         DeviceStream stream = streams.computeIfAbsent(deviceId + "_" + channel, k -> new DeviceStream());
         stream.addFrame(nalData, timestamp, isKeyFrame, payloadType);
 

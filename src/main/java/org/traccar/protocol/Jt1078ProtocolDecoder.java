@@ -42,6 +42,7 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
 
     private long streamDeviceId;
     private int streamChannel;
+    private boolean sourceRegistered;
 
     public Jt1078ProtocolDecoder(Protocol protocol) {
         super(protocol);
@@ -94,11 +95,18 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
         streamDeviceId = device.getId();
         streamChannel = videoChannel;
 
+        // A new connection supersedes any earlier one for this device/channel (the camera can leave
+        // a previous live/playback connection open). Register this connection as the active source.
+        if (!sourceRegistered) {
+            streamManager.setActiveSource(streamDeviceId, videoChannel, this);
+            sourceRegistered = true;
+        }
+
         ByteBuf body = buf.readRetainedSlice(bodyLength);
 
         if (subpackageType == 0) {
             boolean isKeyFrame = dataType == 0;
-            streamManager.handleFrame(streamDeviceId, videoChannel, body, timestamp, isKeyFrame, payloadType);
+            streamManager.handleFrame(streamDeviceId, videoChannel, this, body, timestamp, isKeyFrame, payloadType);
             body.release();
         } else if (subpackageType == 1) {
             if (frameBuffer != null) {
@@ -120,7 +128,7 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
                 frameBuffer.addComponent(true, body);
                 boolean isKeyFrame = frameDataType == 0;
                 streamManager.handleFrame(
-                        streamDeviceId, videoChannel, frameBuffer, frameTimestamp, isKeyFrame, framePayloadType);
+                        streamDeviceId, videoChannel, this, frameBuffer, frameTimestamp, isKeyFrame, framePayloadType);
                 frameBuffer.release();
                 frameBuffer = null;
             } else {
@@ -137,6 +145,7 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
         super.channelInactive(ctx);
         if (streamDeviceId > 0) {
+            streamManager.clearActiveSource(streamDeviceId, streamChannel, this);
             streamManager.removeStream(streamDeviceId, streamChannel);
         }
         if (frameBuffer != null) {

@@ -246,13 +246,21 @@ function renderLoop(p) {
   if (p.queue.length > 45) { while (p.queue.length > 12) p.queue.shift().frame.close(); p.basePts = null; }
 }
 function configureDecoder(p, codec) {
+  p.codecStr = codec;
+  const accel = p.swFallback ? 'prefer-software' : 'prefer-hardware';
   p.decoder = new VideoDecoder({
     output: (frame) => { p.queue.push({ frame, pts: frame.timestamp }); if (p.raf === null) renderLoop(p); },
-    error: (e) => log(`${p.label} decoder error: ` + e.message, 'err')
+    error: (e) => {
+      log(`${p.label} decoder error: ` + e.message, 'err');
+      p.configured = false;
+      try { if (p.decoder.state !== 'closed') p.decoder.close(); } catch (_) {}
+      if (!p.swFallback) { p.swFallback = true; log(`${p.label} → falling back to software decode on next keyframe`, 'mut'); }
+      else { p.dead = true; log(`${p.label} decode failed in software too — giving up.`, 'err'); }
+    }
   });
-  p.decoder.configure({ codec, optimizeForLatency: true, hardwareAcceleration: 'prefer-hardware' });
-  if (p.elCodec) p.elCodec.textContent = codec;
-  log(`${p.label} decoder: ` + codec + ` (buffer ${p.target}ms)`, 'ok');
+  p.decoder.configure({ codec, optimizeForLatency: true, hardwareAcceleration: accel });
+  if (p.elCodec) p.elCodec.textContent = codec + (p.swFallback ? ' (sw)' : '');
+  log(`${p.label} decoder: ` + codec + ` [${accel}] (buffer ${p.target}ms)`, 'ok');
 }
 function openSocket(p, deviceId, channel) {
   const wsBase = S.base.replace(/^http/, 'ws');
@@ -270,16 +278,21 @@ function openSocket(p, deviceId, channel) {
     const nal = buf.subarray(10);
     const h265 = payloadType === 99;
     try {
-      if (!p.configured) {
-        if (!keyFrame) return;
+      if (p.dead) return;
+      if (!p.configured || !p.decoder || p.decoder.state === 'closed') {
+        if (!keyFrame) return; // (re)start only on a keyframe
         let codec;
         if (h265) codec = 'hev1.1.6.L120.B0';
         else { const u = nalUnits(nal, false); const sps = u.find(x => x.type===7); codec = sps ? h264Codec(nal, sps) : 'avc1.42e01e'; }
         configureDecoder(p, codec);
         p.configured = true;
       }
-      p.decoder.decode(new EncodedVideoChunk({ type: keyFrame ? 'key' : 'delta', timestamp: ts * 1000, data: nal }));
-    } catch (e) { log(`${p.label} frame error: ` + e.message, 'err'); }
+      if (!keyFrame && !p.gotKey) return;  // don't feed deltas before the first decoded keyframe
+      if (keyFrame) p.gotKey = true;
+      if (p.decoder.state === 'configured') {
+        p.decoder.decode(new EncodedVideoChunk({ type: keyFrame ? 'key' : 'delta', timestamp: ts * 1000, data: nal }));
+      }
+    } catch (e) { log(`${p.label} frame error: ` + e.message, 'err'); p.configured = false; }
   };
 }
 function stopPlayer(p) {
@@ -305,6 +318,7 @@ function liveStart(ch) {
   if (!S.token) { log('Connect first.', 'err'); return; }
   const deviceId = Number($('#device').value);
   if (!deviceId) { log('Pick a device.', 'err'); return; }
+  stopPlaybackAll(); // live and playback are mutually exclusive per channel on the camera
   if (live[ch]) stopPlayer(live[ch]);
   const p = makePlayer($('#cv'+ch), { codec:$('#codec'+ch), fps:$('#fps'+ch), lat:$('#lat'+ch), res:$('#res'+ch), label:'CH'+ch },
     Math.max(0, Number($('#buffer').value) || 0));
@@ -316,6 +330,9 @@ function liveStop(ch) {
   sendCmd('videoStop', ch).catch(()=>{});
   log(`CH${ch} stopped.`);
 }
+// Stop all of one mode (closes sockets AND tells the camera to stop that channel's stream)
+function stopLiveAll() { let any=false; [1,2].forEach(ch => { if (live[ch]) { stopPlayer(live[ch]); delete live[ch]; sendCmd('videoStop', ch).catch(()=>{}); any=true; } }); return any; }
+function stopPlaybackAll() { pbAdvanceStop(); let any=false; [1,2].forEach(ch => { if (pb[ch]) { stopPlayer(pb[ch]); delete pb[ch]; sendCmd('videoStop', ch).catch(()=>{}); any=true; } }); return any; }
 
 // ---- PLAYBACK ----
 function localIso(dateStr, minutes) {
@@ -338,14 +355,14 @@ function pbPlay() {
   if (!S.token) { log('Connect first.', 'err'); return; }
   const deviceId = Number($('#device').value);
   if (!deviceId) { log('Pick a device.', 'err'); return; }
+  const hadLive = stopLiveAll(); // stop live first so the camera isn't streaming both on a channel
   const date = $('#pbDate').value;
   const min = playheadMinutes();
   const startIso = localIso(date, min), endIso = localIso(date, 1440);
   const sc = speedCodes();
   log(`Playback from ${fmt(min)} on ${date} at ${sc.mult}x`);
-  pbStartChannel(1, startIso, endIso, sc);
-  pbStartChannel(2, startIso, endIso, sc);
-  pbAdvanceStart(min, sc.mult);
+  const go = () => { pbStartChannel(1, startIso, endIso, sc); pbStartChannel(2, startIso, endIso, sc); pbAdvanceStart(min, sc.mult); };
+  if (hadLive) setTimeout(go, 600); else go(); // let the camera close the live stream before playback
 }
 function pbPause() { [1,2].forEach(ch => sendCmd('videoPause', ch).catch(()=>{})); pbAdvanceStop(); log('Playback paused.'); }
 function pbResumeCmd() { [1,2].forEach(ch => sendCmd('videoResume', ch).catch(()=>{})); log('Playback resumed.'); }
@@ -366,7 +383,9 @@ function switchTab(name) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab===name));
   document.querySelectorAll('.pane-live').forEach(e => e.hidden = name!=='live');
   document.querySelectorAll('.pane-playback').forEach(e => e.hidden = name!=='playback');
-  if (name==='playback') renderTimeline();
+  // leaving a tab stops its streams so live and playback never run at once
+  if (name==='playback') { stopLiveAll(); renderTimeline(); }
+  else { stopPlaybackAll(); }
 }
 
 // ================= Playback timeline =================
