@@ -157,7 +157,8 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
 
     /**
      * Wraps one intercom audio frame from the app in a JT1078 RTP packet and writes it back to the
-     * camera over its own connection (two-way voice, data type 3). Payload is G.711A (PCMA).
+     * camera over its own connection (two-way voice, data type 3). Payload is AAC (the JC181's own
+     * audio codec) — the camera expects the uplink in the same format it streams.
      */
     private synchronized void sendAudioFrame(
             Channel channel, SocketAddress remoteAddress, byte[] id, int logicalChannel, byte[] audio) {
@@ -167,13 +168,13 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
         ByteBuf packet = Unpooled.buffer(30 + audio.length);
         packet.writeInt(0x30316364); // RTP frame header identifier
         packet.writeByte(0x81); // V=2, P=0, X=0, CC=1
-        packet.writeByte(0x80 | 6); // M=1, PT=6 (G.711A / PCMA)
+        packet.writeByte(0x80 | 19); // M=1, PT=19 (AAC)
         packet.writeShort(talkSequence++ & 0xFFFF);
         packet.writeBytes(id); // SIM (the same identifier the camera streams with)
         packet.writeByte(logicalChannel);
         packet.writeByte(0x30); // data type 3 (audio), subpackage 0 (atomic)
         packet.writeLong(talkTimestamp); // relative timestamp, milliseconds
-        talkTimestamp += 20; // ~20 ms per G.711 frame
+        talkTimestamp += 64; // ~64 ms per AAC-LC frame (1024 samples @ 16 kHz)
         packet.writeShort(audio.length);
         packet.writeBytes(audio);
         channel.writeAndFlush(new NetworkMessage(packet, remoteAddress));

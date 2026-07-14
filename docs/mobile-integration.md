@@ -126,14 +126,14 @@ To show a Hikvision-style timeline of what's actually recorded:
 The camera has a mic **and** a speaker, so you can talk to the driver.
 
 1. Send `videoTalk { index: channel }` — the server issues `0x9101` with data type **2** (two-way voice) and the camera opens a JT1078 connection.
-2. Open the **same** media WebSocket for that `deviceId`/`channel`. You'll **receive** the camera's audio (intercom is audio-only — no video) exactly like §3.
-3. To **send** your mic audio: capture it, encode to **G.711A (PCMA), 8 kHz mono**, and send each frame as a **binary WebSocket message** back on that same socket (just the raw a-law bytes — no header). The server wraps each into a JT1078 RTP audio packet and forwards it to the camera, which plays it through its speaker.
+2. Open the **same** media WebSocket for that `deviceId`/`channel`. You'll **receive** the camera's audio (intercom is audio-only — no video) exactly like §3 — it's **AAC (payload type 19)**, same as live.
+3. To **send** your mic audio: capture it, encode to **AAC-LC, 16 kHz mono** (the JC181's own codec — it will *not* accept G.711/PCM), ADTS-frame it, and send each frame as a **binary WebSocket message** back on that same socket. The server wraps each into a JT1078 RTP audio packet (PT 19) and forwards it to the camera, which plays it through its speaker.
 4. Stop with `videoStop { index: channel }` and close the socket.
 
 Notes:
-- **G.711A is trivial to encode** (a-law companding, 1 byte/sample) — both Android and iOS can do it in a few lines, or with the platform's built-in G.711 codec.
+- **Match the camera's codec exactly: AAC-LC, 16 kHz, mono.** The JC181 streams AAC and expects the uplink in the same format; sending G.711A/PCMA produces static/silence. On Android use `MediaCodec` (`audio/mp4a-latm`), on iOS `AudioConverter`/`AVAudioEngine` — both encode AAC natively.
 - Intercom is **its own stream** on that channel — start it after stopping live/playback (same one-stream-per-channel rule). Use **echo cancellation** on the mic and don't route it to the local speaker, or you'll get feedback.
-- Downlink codec: the camera's reply audio is delivered with its payload-type byte; treat non-`98`/`99` as audio and decode accordingly (G.711A during intercom).
+- Downlink codec: the camera's reply audio is delivered with its payload-type byte; treat non-`98`/`99` as audio and decode as AAC.
 
 ---
 

@@ -93,7 +93,7 @@
         <label>🎙 Intercom (two-way voice)</label>
         <select id="talkChannel"><option value="1">Talk to CH1 (road)</option><option value="2">Talk to CH2 (cabin)</option></select>
         <div class="btns"><button class="primary" id="talkBtn">🎤 Start talking</button></div>
-        <div class="muted" style="margin-top:6px">Sends your mic to the camera speaker and plays the camera's reply. Its own stream (stops live/playback on that channel). G.711A · needs mic permission.</div>
+        <div class="muted" style="margin-top:6px">Sends your mic to the camera speaker and plays the camera's reply. Its own stream (stops live/playback on that channel). AAC · needs mic permission · desktop Chrome/Edge.</div>
       </div>
     </div>
 
@@ -557,72 +557,83 @@ async function pbQuery() {   // "Load recordings"
   setTimeout(() => finish(false), 20000);
 }
 
-// ================= INTERCOM (two-way voice) =================
-// G.711 A-law codec (8-bit PCMA, 8 kHz mono) — the JT1078 intercom standard.
-function pcm16ToAlaw(s) {
-  let sign = (s >> 8) & 0x80;
-  if (sign !== 0) s = -s;
-  if (s > 32635) s = 32635;
-  let exponent = 7;
-  for (let mask = 0x4000; (s & mask) === 0 && exponent > 0; exponent--, mask >>= 1) {}
-  let mantissa = (s >> (exponent === 0 ? 4 : exponent + 3)) & 0x0f;
-  return (sign | (exponent << 4) | mantissa) ^ 0x55;
-}
-function alawToPcm16(a) {
-  a ^= 0x55;
-  let sign = a & 0x80, exponent = (a & 0x70) >> 4, mantissa = a & 0x0f;
-  let sample = (mantissa << 4) + 8;
-  if (exponent !== 0) sample += 0x100;
-  if (exponent > 1) sample <<= (exponent - 1);
-  return sign ? -sample : sample;
+// ================= INTERCOM (two-way voice, AAC — the JC181's native audio codec) =================
+function adtsHeader(len) {                  // AAC-LC, 16 kHz (freq index 8), mono
+  const frameLen = len + 7, freqIdx = 8, chan = 1;
+  return new Uint8Array([
+    0xFF, 0xF1,
+    (1 << 6) | (freqIdx << 2) | (chan >> 2),
+    ((chan & 3) << 6) | ((frameLen >> 11) & 0x03),
+    (frameLen >> 3) & 0xFF,
+    ((frameLen & 0x07) << 5) | 0x1F,
+    0xFC,
+  ]);
 }
 
-let talkPlayTime = 0, talkLoggedPt = -1;
-function talkPlayDown(arrbuf) {           // play the camera's reply audio (assume G.711A)
+let talkLoggedPt = -1;
+function talkPlayDown(arrbuf) {              // camera's reply is AAC — decode via the live audio path
   const b = new Uint8Array(arrbuf), pt = b[0];
-  if (pt === 98 || pt === 99) return;     // two-way is audio-only; ignore any video
-  if (pt !== talkLoggedPt) { talkLoggedPt = pt; log(`Intercom downlink audio payloadType=${pt} (${pt===19?'AAC':'assuming G.711A'}).`); }
-  const ctx = talk && talk.ctx; if (!ctx) return;
-  const payload = b.subarray(10);
-  const pcm = new Float32Array(payload.length);
-  for (let i = 0; i < payload.length; i++) pcm[i] = alawToPcm16(payload[i]) / 32768;
-  const buffer = ctx.createBuffer(1, pcm.length, 8000);
-  buffer.getChannelData(0).set(pcm);
-  const src = ctx.createBufferSource(); src.buffer = buffer; src.connect(ctx.destination);
-  const now = ctx.currentTime;
-  if (talkPlayTime < now) talkPlayTime = now + 0.08;
-  src.start(talkPlayTime); talkPlayTime += buffer.duration;
+  if (pt === 98 || pt === 99) return;       // two-way is audio-only; ignore any video
+  if (pt !== talkLoggedPt) { talkLoggedPt = pt; log(`Intercom downlink audio payloadType=${pt}${pt === 19 ? ' (AAC)' : ''}.`); }
+  if (!talk) return;
+  const ts = Number(new DataView(arrbuf).getBigUint64(2));
+  handleAudio(talk.player, b.subarray(10), ts);
 }
 
 async function talkStart(ch) {
   if (!S.token) { log('Connect first.', 'err'); return; }
   const deviceId = Number($('#device').value);
   if (!deviceId) { log('Pick a device.', 'err'); return; }
-  stopLiveAll(); stopPlaybackAll();       // intercom is its own stream on that channel
+  if (!('AudioEncoder' in window)) { log('This browser has no AudioEncoder (WebCodecs). Intercom uplink needs desktop Chrome/Edge.', 'err'); return; }
+  const encCfg = { codec: 'mp4a.40.2', sampleRate: 16000, numberOfChannels: 1, bitrate: 24000 };
+  try {
+    const sup = await AudioEncoder.isConfigSupported(encCfg);
+    if (!sup.supported) { log('This browser cannot encode AAC (no platform AAC encoder). The mobile app handles intercom uplink; for the demo use Chrome/Edge on Windows/macOS.', 'err'); return; }
+  } catch (e) { log('AAC encode check failed: ' + e.message, 'err'); return; }
+
+  stopLiveAll(); stopPlaybackAll();          // intercom is its own stream on that channel
   let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount:1, echoCancellation:true, noiseSuppression:true } });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount:1, sampleRate:16000, echoCancellation:true, noiseSuppression:true } });
   } catch (e) { log('Mic permission denied: ' + e.message, 'err'); return; }
-  const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 8000 });
+
+  const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
   const src = ctx.createMediaStreamSource(stream);
   const node = ctx.createScriptProcessor(2048, 1, 1);
   const mute = ctx.createGain(); mute.gain.value = 0; // pump the processor without local echo
-  talk = { ch, stream, ctx, node, ws: null }; talkPlayTime = 0; talkLoggedPt = -1;
+  talk = { ch, stream, ctx, node, ws:null, encoder:null, ts:0,
+    player: { muted:false, audioCtx:null, audioDecoder:null, audioCfg:false, audioNext:0, label:'Intercom' } };
+  talkLoggedPt = -1;
 
   const wsBase = S.base.replace(/^http/, 'ws');
   const ws = new WebSocket(`${wsBase}/api/stream/video?deviceId=${deviceId}&channel=${ch}&token=${encodeURIComponent(S.token)}`);
   ws.binaryType = 'arraybuffer'; talk.ws = ws;
-  ws.onopen = () => log(`Intercom CH${ch} socket open — streaming mic.`, 'ok');
+  ws.onopen = () => log(`Intercom CH${ch} socket open — streaming mic (AAC).`, 'ok');
   ws.onclose = () => log(`Intercom CH${ch} socket closed.`);
   ws.onerror = () => log(`Intercom CH${ch} socket error.`, 'err');
   ws.onmessage = (ev) => talkPlayDown(ev.data);
 
+  const encoder = new AudioEncoder({
+    output: (chunk) => {
+      if (!talk || !talk.ws || talk.ws.readyState !== 1) return;
+      const aac = new Uint8Array(chunk.byteLength); chunk.copyTo(aac);
+      const hdr = adtsHeader(aac.length);
+      const frame = new Uint8Array(hdr.length + aac.length);
+      frame.set(hdr, 0); frame.set(aac, hdr.length);
+      talk.ws.send(frame);
+    },
+    error: (e) => log('Intercom encoder error: ' + e.message, 'err'),
+  });
+  encoder.configure(encCfg); talk.encoder = encoder;
+
   node.onaudioprocess = (e) => {
-    if (!talk || !talk.ws || talk.ws.readyState !== 1) return;
-    const input = e.inputBuffer.getChannelData(0); // Float32 @ 8 kHz
-    const out = new Uint8Array(input.length);
-    for (let i = 0; i < input.length; i++) out[i] = pcm16ToAlaw((Math.max(-1, Math.min(1, input[i])) * 32767) | 0);
-    talk.ws.send(out);
+    if (!talk || !talk.encoder || talk.encoder.state !== 'configured') return;
+    const input = e.inputBuffer.getChannelData(0);          // Float32 @ 16 kHz
+    const ad = new AudioData({ format:'f32-planar', sampleRate:16000, numberOfFrames:input.length,
+      numberOfChannels:1, timestamp: talk.ts, data: Float32Array.from(input) });
+    talk.ts += Math.round(input.length / 16000 * 1e6);
+    try { talk.encoder.encode(ad); } catch (err) {}
+    ad.close();
   };
   src.connect(node); node.connect(mute); mute.connect(ctx.destination);
 
@@ -632,12 +643,15 @@ async function talkStart(ch) {
 }
 function talkStop() {
   if (!talk) return;
-  const ch = talk.ch;
+  const ch = talk.ch, p = talk.player;
   try { talk.node.disconnect(); } catch (e) {}
+  try { if (talk.encoder && talk.encoder.state !== 'closed') talk.encoder.close(); } catch (e) {}
+  try { if (p.audioDecoder && p.audioDecoder.state !== 'closed') p.audioDecoder.close(); } catch (e) {}
+  try { if (p.audioCtx) p.audioCtx.close(); } catch (e) {}
   try { talk.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
   try { talk.ctx.close(); } catch (e) {}
   try { talk.ws && talk.ws.close(); } catch (e) {}
-  talk = null; talkPlayTime = 0;
+  talk = null;
   sendCmd('videoStop', ch).catch(() => {});
   $('#talkBtn').textContent = '🎤 Start talking'; $('#talkBtn').classList.remove('stop'); $('#talkBtn').classList.add('primary');
   log(`Intercom CH${ch} stopped.`);
