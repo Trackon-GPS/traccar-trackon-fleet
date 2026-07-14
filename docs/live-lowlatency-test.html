@@ -558,8 +558,9 @@ async function pbQuery() {   // "Load recordings"
 }
 
 // ================= INTERCOM (two-way voice, AAC — the JC181's native audio codec) =================
-function adtsHeader(len) {                  // AAC-LC, 16 kHz (freq index 8), mono
-  const frameLen = len + 7, freqIdx = 8, chan = 1;
+const AAC_FREQ_IDX = { 96000:0,88200:1,64000:2,48000:3,44100:4,32000:5,24000:6,22050:7,16000:8,12000:9,11025:10,8000:11 };
+function adtsHeader(len, rate) {            // AAC-LC, mono
+  const frameLen = len + 7, freqIdx = AAC_FREQ_IDX[rate] ?? 8, chan = 1;
   return new Uint8Array([
     0xFF, 0xF1,
     (1 << 6) | (freqIdx << 2) | (chan >> 2),
@@ -568,6 +569,15 @@ function adtsHeader(len) {                  // AAC-LC, 16 kHz (freq index 8), mo
     ((frameLen & 0x07) << 5) | 0x1F,
     0xFC,
   ]);
+}
+async function pickAacConfig() {            // browsers vary on which AAC rates they can encode
+  for (const sampleRate of [16000, 44100, 48000, 32000, 22050]) {
+    for (const bitrate of [32000, 64000, 24000]) {
+      const cfg = { codec:'mp4a.40.2', sampleRate, numberOfChannels:1, bitrate };
+      try { const s = await AudioEncoder.isConfigSupported(cfg); if (s && s.supported) return cfg; } catch (e) {}
+    }
+  }
+  return null;
 }
 
 let talkLoggedPt = -1;
@@ -585,11 +595,11 @@ async function talkStart(ch) {
   const deviceId = Number($('#device').value);
   if (!deviceId) { log('Pick a device.', 'err'); return; }
   if (!('AudioEncoder' in window)) { log('This browser has no AudioEncoder (WebCodecs). Intercom uplink needs desktop Chrome/Edge.', 'err'); return; }
-  const encCfg = { codec: 'mp4a.40.2', sampleRate: 16000, numberOfChannels: 1, bitrate: 24000 };
-  try {
-    const sup = await AudioEncoder.isConfigSupported(encCfg);
-    if (!sup.supported) { log('This browser cannot encode AAC (no platform AAC encoder). The mobile app handles intercom uplink; for the demo use Chrome/Edge on Windows/macOS.', 'err'); return; }
-  } catch (e) { log('AAC encode check failed: ' + e.message, 'err'); return; }
+  const encCfg = await pickAacConfig();
+  if (!encCfg) { log('This browser has no AAC encoder. Use official Google Chrome or Edge — Brave / Arc / Chromium (and most Linux builds) ship without an AAC encoder. The mobile app encodes AAC natively, so this only limits the browser demo.', 'err'); return; }
+  const rate = encCfg.sampleRate;
+  if (rate !== 16000) log(`Browser encodes AAC only at ${rate} Hz (camera prefers 16 kHz) — trying it.`, 'warn');
+  else log('Intercom AAC encoder ready: 16 kHz.', 'ok');
 
   stopLiveAll(); stopPlaybackAll();          // intercom is its own stream on that channel
   let stream;
@@ -597,7 +607,7 @@ async function talkStart(ch) {
     stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount:1, sampleRate:16000, echoCancellation:true, noiseSuppression:true } });
   } catch (e) { log('Mic permission denied: ' + e.message, 'err'); return; }
 
-  const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: rate });
   const src = ctx.createMediaStreamSource(stream);
   const node = ctx.createScriptProcessor(2048, 1, 1);
   const mute = ctx.createGain(); mute.gain.value = 0; // pump the processor without local echo
@@ -617,7 +627,7 @@ async function talkStart(ch) {
     output: (chunk) => {
       if (!talk || !talk.ws || talk.ws.readyState !== 1) return;
       const aac = new Uint8Array(chunk.byteLength); chunk.copyTo(aac);
-      const hdr = adtsHeader(aac.length);
+      const hdr = adtsHeader(aac.length, rate);
       const frame = new Uint8Array(hdr.length + aac.length);
       frame.set(hdr, 0); frame.set(aac, hdr.length);
       talk.ws.send(frame);
@@ -628,10 +638,10 @@ async function talkStart(ch) {
 
   node.onaudioprocess = (e) => {
     if (!talk || !talk.encoder || talk.encoder.state !== 'configured') return;
-    const input = e.inputBuffer.getChannelData(0);          // Float32 @ 16 kHz
-    const ad = new AudioData({ format:'f32-planar', sampleRate:16000, numberOfFrames:input.length,
+    const input = e.inputBuffer.getChannelData(0);          // Float32 @ capture rate
+    const ad = new AudioData({ format:'f32-planar', sampleRate:rate, numberOfFrames:input.length,
       numberOfChannels:1, timestamp: talk.ts, data: Float32Array.from(input) });
-    talk.ts += Math.round(input.length / 16000 * 1e6);
+    talk.ts += Math.round(input.length / rate * 1e6);
     try { talk.encoder.encode(ad); } catch (err) {}
     ad.close();
   };
