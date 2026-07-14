@@ -92,8 +92,14 @@
       <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
         <label>🎙 Intercom (two-way voice)</label>
         <select id="talkChannel"><option value="1">Talk to CH1 (road)</option><option value="2">Talk to CH2 (cabin)</option></select>
+        <label style="margin-top:8px">Uplink codec (find what the camera accepts)</label>
+        <select id="talkCodec">
+          <option value="g711a">G.711A / PCMA (8 kHz)</option>
+          <option value="pcm16">PCM S16BE (16 kHz)</option>
+          <option value="aac">AAC (browser encoder)</option>
+        </select>
         <div class="btns"><button class="primary" id="talkBtn">🎤 Start talking</button></div>
-        <div class="muted" style="margin-top:6px">Sends your mic to the camera speaker and plays the camera's reply. Its own stream (stops live/playback on that channel). AAC · needs mic permission · desktop Chrome/Edge.</div>
+        <div class="muted" style="margin-top:6px">Sends your mic to the camera speaker and plays the camera's reply (AAC). Its own stream (stops live/playback on that channel). Needs mic permission. Try each codec to find which one the camera plays cleanly.</div>
       </div>
     </div>
 
@@ -580,6 +586,18 @@ async function pickAacConfig() {            // browsers vary on which AAC rates 
   return null;
 }
 
+// G.711 A-law encode (16-bit PCM sample -> a-law byte)
+function pcm16ToAlaw(s) {
+  let sign = (s >> 8) & 0x80;
+  if (sign !== 0) s = -s;
+  if (s > 32635) s = 32635;
+  let exponent = 7;
+  for (let mask = 0x4000; (s & mask) === 0 && exponent > 0; exponent--, mask >>= 1) {}
+  let mantissa = (s >> (exponent === 0 ? 4 : exponent + 3)) & 0x0f;
+  return (sign | (exponent << 4) | mantissa) ^ 0x55;
+}
+const clamp = x => Math.max(-1, Math.min(1, x));
+
 let talkLoggedPt = -1;
 function talkPlayDown(arrbuf) {              // camera's reply is AAC — decode via the live audio path
   const b = new Uint8Array(arrbuf), pt = b[0];
@@ -594,22 +612,29 @@ async function talkStart(ch) {
   if (!S.token) { log('Connect first.', 'err'); return; }
   const deviceId = Number($('#device').value);
   if (!deviceId) { log('Pick a device.', 'err'); return; }
-  if (!('AudioEncoder' in window)) { log('This browser has no AudioEncoder (WebCodecs). Intercom uplink needs desktop Chrome/Edge.', 'err'); return; }
-  const encCfg = await pickAacConfig();
-  if (!encCfg) { log('This browser has no AAC encoder. Use official Google Chrome or Edge — Brave / Arc / Chromium (and most Linux builds) ship without an AAC encoder. The mobile app encodes AAC natively, so this only limits the browser demo.', 'err'); return; }
-  const rate = encCfg.sampleRate;
-  if (rate !== 16000) log(`Browser encodes AAC only at ${rate} Hz (camera prefers 16 kHz) — trying it.`, 'warn');
-  else log('Intercom AAC encoder ready: 16 kHz.', 'ok');
+  const codec = $('#talkCodec').value;       // g711a | pcm16 | aac
+
+  // Decide capture rate, JT1078 payload type, and (for AAC) the encoder config up front.
+  let rate, pt, encCfg = null;
+  if (codec === 'g711a') { rate = 8000; pt = 6; }
+  else if (codec === 'pcm16') { rate = 16000; pt = 16; }
+  else {
+    if (!('AudioEncoder' in window)) { log('No AudioEncoder in this browser. Pick G.711A or PCM instead.', 'err'); return; }
+    encCfg = await pickAacConfig();
+    if (!encCfg) { log('This browser cannot encode AAC. Pick G.711A or PCM instead (or use official Chrome/Edge).', 'err'); return; }
+    rate = encCfg.sampleRate; pt = 19;
+    log(`AAC encoder: ${rate} Hz${rate !== 16000 ? ' (camera prefers 16 kHz — trying anyway)' : ''}.`, rate !== 16000 ? 'warn' : 'ok');
+  }
 
   stopLiveAll(); stopPlaybackAll();          // intercom is its own stream on that channel
   let stream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount:1, sampleRate:16000, echoCancellation:true, noiseSuppression:true } });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount:1, sampleRate:rate, echoCancellation:true, noiseSuppression:true } });
   } catch (e) { log('Mic permission denied: ' + e.message, 'err'); return; }
 
   const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: rate });
   const src = ctx.createMediaStreamSource(stream);
-  const node = ctx.createScriptProcessor(2048, 1, 1);
+  const node = ctx.createScriptProcessor(1024, 1, 1);
   const mute = ctx.createGain(); mute.gain.value = 0; // pump the processor without local echo
   talk = { ch, stream, ctx, node, ws:null, encoder:null, ts:0,
     player: { muted:false, audioCtx:null, audioDecoder:null, audioCfg:false, audioNext:0, label:'Intercom' } };
@@ -618,33 +643,51 @@ async function talkStart(ch) {
   const wsBase = S.base.replace(/^http/, 'ws');
   const ws = new WebSocket(`${wsBase}/api/stream/video?deviceId=${deviceId}&channel=${ch}&token=${encodeURIComponent(S.token)}`);
   ws.binaryType = 'arraybuffer'; talk.ws = ws;
-  ws.onopen = () => log(`Intercom CH${ch} socket open — streaming mic (AAC).`, 'ok');
+  ws.onopen = () => log(`Intercom CH${ch} socket open — streaming mic (${codec}, PT ${pt}).`, 'ok');
   ws.onclose = () => log(`Intercom CH${ch} socket closed.`);
   ws.onerror = () => log(`Intercom CH${ch} socket error.`, 'err');
   ws.onmessage = (ev) => talkPlayDown(ev.data);
 
-  const encoder = new AudioEncoder({
-    output: (chunk) => {
+  if (codec === 'aac') {
+    const encoder = new AudioEncoder({
+      output: (chunk) => {
+        if (!talk || !talk.ws || talk.ws.readyState !== 1) return;
+        const aac = new Uint8Array(chunk.byteLength); chunk.copyTo(aac);
+        const hdr = adtsHeader(aac.length, rate);
+        const frame = new Uint8Array(1 + hdr.length + aac.length);
+        frame[0] = pt; frame.set(hdr, 1); frame.set(aac, 1 + hdr.length);
+        talk.ws.send(frame);
+      },
+      error: (e) => log('Intercom encoder error: ' + e.message + ' — try G.711A or PCM instead.', 'err'),
+    });
+    encoder.configure(encCfg); talk.encoder = encoder;
+    node.onaudioprocess = (e) => {
+      if (!talk || !talk.encoder || talk.encoder.state !== 'configured') return;
+      const input = e.inputBuffer.getChannelData(0);
+      const ad = new AudioData({ format:'f32-planar', sampleRate:rate, numberOfFrames:input.length,
+        numberOfChannels:1, timestamp: talk.ts, data: Float32Array.from(input) });
+      talk.ts += Math.round(input.length / rate * 1e6);
+      try { talk.encoder.encode(ad); } catch (err) {}
+      ad.close();
+    };
+  } else if (codec === 'g711a') {
+    node.onaudioprocess = (e) => {
       if (!talk || !talk.ws || talk.ws.readyState !== 1) return;
-      const aac = new Uint8Array(chunk.byteLength); chunk.copyTo(aac);
-      const hdr = adtsHeader(aac.length, rate);
-      const frame = new Uint8Array(hdr.length + aac.length);
-      frame.set(hdr, 0); frame.set(aac, hdr.length);
-      talk.ws.send(frame);
-    },
-    error: (e) => log('Intercom encoder error: ' + e.message, 'err'),
-  });
-  encoder.configure(encCfg); talk.encoder = encoder;
-
-  node.onaudioprocess = (e) => {
-    if (!talk || !talk.encoder || talk.encoder.state !== 'configured') return;
-    const input = e.inputBuffer.getChannelData(0);          // Float32 @ capture rate
-    const ad = new AudioData({ format:'f32-planar', sampleRate:rate, numberOfFrames:input.length,
-      numberOfChannels:1, timestamp: talk.ts, data: Float32Array.from(input) });
-    talk.ts += Math.round(input.length / rate * 1e6);
-    try { talk.encoder.encode(ad); } catch (err) {}
-    ad.close();
-  };
+      const input = e.inputBuffer.getChannelData(0);         // Float32 @ 8 kHz
+      const out = new Uint8Array(1 + input.length); out[0] = pt;
+      for (let i = 0; i < input.length; i++) out[1 + i] = pcm16ToAlaw((clamp(input[i]) * 32767) | 0);
+      talk.ws.send(out);
+    };
+  } else { // pcm16 — signed 16-bit big-endian (S16BE_MONO)
+    node.onaudioprocess = (e) => {
+      if (!talk || !talk.ws || talk.ws.readyState !== 1) return;
+      const input = e.inputBuffer.getChannelData(0);         // Float32 @ 16 kHz
+      const out = new Uint8Array(1 + input.length * 2); out[0] = pt;
+      const dv = new DataView(out.buffer);
+      for (let i = 0; i < input.length; i++) dv.setInt16(1 + i * 2, (clamp(input[i]) * 32767) | 0, false);
+      talk.ws.send(out);
+    };
+  }
   src.connect(node); node.connect(mute); mute.connect(ctx.destination);
 
   await sendCmd('videoTalk', ch);
