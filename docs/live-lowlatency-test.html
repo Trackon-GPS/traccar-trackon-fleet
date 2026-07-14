@@ -89,6 +89,12 @@
         <button class="primary" id="startAll">▶ Start both</button>
         <button class="stop" id="stopAll">■ Stop both</button>
       </div>
+      <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+        <label>🎙 Intercom (two-way voice)</label>
+        <select id="talkChannel"><option value="1">Talk to CH1 (road)</option><option value="2">Talk to CH2 (cabin)</option></select>
+        <div class="btns"><button class="primary" id="talkBtn">🎤 Start talking</button></div>
+        <div class="muted" style="margin-top:6px">Sends your mic to the camera speaker and plays the camera's reply. Its own stream (stops live/playback on that channel). G.711A · needs mic permission.</div>
+      </div>
     </div>
 
     <!-- PLAYBACK controls -->
@@ -158,6 +164,7 @@ const S = { base:'', auth:'', token:'', audioKey:null };  // audioKey: which win
 const live = {};   // channel -> player
 let pbPlayer = null;   // single playback player (camera serves one playback stream at a time)
 let pbActiveCh = 0;    // camera channel currently being played back
+let talk = null;       // intercom session { ch, stream, ctx, node, ws }
 
 function log(m, c='') { const e=$('#log'); e.innerHTML += `<span class="log-${c||'mut'}">[${new Date().toLocaleTimeString()}] ${m}</span>\n`; e.scrollTop=e.scrollHeight; }
 function api(path, opts={}) {
@@ -375,6 +382,7 @@ function liveStart(ch) {
   if (!S.token) { log('Connect first.', 'err'); return; }
   const deviceId = Number($('#device').value);
   if (!deviceId) { log('Pick a device.', 'err'); return; }
+  if (talk) talkStop();
   stopPlaybackAll(); // live and playback are mutually exclusive per channel on the camera
   if (live[ch]) stopPlayer(live[ch]);
   const p = makePlayer($('#cv'+ch), { codec:$('#codec'+ch), fps:$('#fps'+ch), lat:$('#lat'+ch), res:$('#res'+ch), label:'CH'+ch, key:'live'+ch },
@@ -412,6 +420,7 @@ function pbPlay() {
   if (!S.token) { log('Connect first.', 'err'); return; }
   const deviceId = Number($('#device').value);
   if (!deviceId) { log('Pick a device.', 'err'); return; }
+  if (talk) talkStop();
   const hadLive = stopLiveAll();   // live and playback can't run together on the camera
   stopPlaybackAll();               // one playback stream at a time
   const ch = Number($('#pbChannel').value);
@@ -548,8 +557,95 @@ async function pbQuery() {   // "Load recordings"
   setTimeout(() => finish(false), 20000);
 }
 
+// ================= INTERCOM (two-way voice) =================
+// G.711 A-law codec (8-bit PCMA, 8 kHz mono) — the JT1078 intercom standard.
+function pcm16ToAlaw(s) {
+  let sign = (s >> 8) & 0x80;
+  if (sign !== 0) s = -s;
+  if (s > 32635) s = 32635;
+  let exponent = 7;
+  for (let mask = 0x4000; (s & mask) === 0 && exponent > 0; exponent--, mask >>= 1) {}
+  let mantissa = (s >> (exponent === 0 ? 4 : exponent + 3)) & 0x0f;
+  return (sign | (exponent << 4) | mantissa) ^ 0x55;
+}
+function alawToPcm16(a) {
+  a ^= 0x55;
+  let sign = a & 0x80, exponent = (a & 0x70) >> 4, mantissa = a & 0x0f;
+  let sample = (mantissa << 4) + 8;
+  if (exponent !== 0) sample += 0x100;
+  if (exponent > 1) sample <<= (exponent - 1);
+  return sign ? -sample : sample;
+}
+
+let talkPlayTime = 0, talkLoggedPt = -1;
+function talkPlayDown(arrbuf) {           // play the camera's reply audio (assume G.711A)
+  const b = new Uint8Array(arrbuf), pt = b[0];
+  if (pt === 98 || pt === 99) return;     // two-way is audio-only; ignore any video
+  if (pt !== talkLoggedPt) { talkLoggedPt = pt; log(`Intercom downlink audio payloadType=${pt} (${pt===19?'AAC':'assuming G.711A'}).`); }
+  const ctx = talk && talk.ctx; if (!ctx) return;
+  const payload = b.subarray(10);
+  const pcm = new Float32Array(payload.length);
+  for (let i = 0; i < payload.length; i++) pcm[i] = alawToPcm16(payload[i]) / 32768;
+  const buffer = ctx.createBuffer(1, pcm.length, 8000);
+  buffer.getChannelData(0).set(pcm);
+  const src = ctx.createBufferSource(); src.buffer = buffer; src.connect(ctx.destination);
+  const now = ctx.currentTime;
+  if (talkPlayTime < now) talkPlayTime = now + 0.08;
+  src.start(talkPlayTime); talkPlayTime += buffer.duration;
+}
+
+async function talkStart(ch) {
+  if (!S.token) { log('Connect first.', 'err'); return; }
+  const deviceId = Number($('#device').value);
+  if (!deviceId) { log('Pick a device.', 'err'); return; }
+  stopLiveAll(); stopPlaybackAll();       // intercom is its own stream on that channel
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount:1, echoCancellation:true, noiseSuppression:true } });
+  } catch (e) { log('Mic permission denied: ' + e.message, 'err'); return; }
+  const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 8000 });
+  const src = ctx.createMediaStreamSource(stream);
+  const node = ctx.createScriptProcessor(2048, 1, 1);
+  const mute = ctx.createGain(); mute.gain.value = 0; // pump the processor without local echo
+  talk = { ch, stream, ctx, node, ws: null }; talkPlayTime = 0; talkLoggedPt = -1;
+
+  const wsBase = S.base.replace(/^http/, 'ws');
+  const ws = new WebSocket(`${wsBase}/api/stream/video?deviceId=${deviceId}&channel=${ch}&token=${encodeURIComponent(S.token)}`);
+  ws.binaryType = 'arraybuffer'; talk.ws = ws;
+  ws.onopen = () => log(`Intercom CH${ch} socket open — streaming mic.`, 'ok');
+  ws.onclose = () => log(`Intercom CH${ch} socket closed.`);
+  ws.onerror = () => log(`Intercom CH${ch} socket error.`, 'err');
+  ws.onmessage = (ev) => talkPlayDown(ev.data);
+
+  node.onaudioprocess = (e) => {
+    if (!talk || !talk.ws || talk.ws.readyState !== 1) return;
+    const input = e.inputBuffer.getChannelData(0); // Float32 @ 8 kHz
+    const out = new Uint8Array(input.length);
+    for (let i = 0; i < input.length; i++) out[i] = pcm16ToAlaw((Math.max(-1, Math.min(1, input[i])) * 32767) | 0);
+    talk.ws.send(out);
+  };
+  src.connect(node); node.connect(mute); mute.connect(ctx.destination);
+
+  await sendCmd('videoTalk', ch);
+  $('#talkBtn').textContent = '■ Stop talking'; $('#talkBtn').classList.add('stop'); $('#talkBtn').classList.remove('primary');
+  log(`Intercom started on CH${ch}. Speak into your mic.`, 'ok');
+}
+function talkStop() {
+  if (!talk) return;
+  const ch = talk.ch;
+  try { talk.node.disconnect(); } catch (e) {}
+  try { talk.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+  try { talk.ctx.close(); } catch (e) {}
+  try { talk.ws && talk.ws.close(); } catch (e) {}
+  talk = null; talkPlayTime = 0;
+  sendCmd('videoStop', ch).catch(() => {});
+  $('#talkBtn').textContent = '🎤 Start talking'; $('#talkBtn').classList.remove('stop'); $('#talkBtn').classList.add('primary');
+  log(`Intercom CH${ch} stopped.`);
+}
+
 // ================= wiring =================
 $('#connect').onclick = connect;
+$('#talkBtn').onclick = () => { if (talk) talkStop(); else talkStart(Number($('#talkChannel').value)); };
 $('#startAll').onclick = () => { liveStart(1); liveStart(2); };
 $('#stopAll').onclick = () => { liveStop(1); liveStop(2); };
 document.querySelectorAll('[data-startch]').forEach(b => b.onclick = () => liveStart(Number(b.dataset.startch)));

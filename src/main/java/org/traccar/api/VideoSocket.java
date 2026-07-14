@@ -34,6 +34,8 @@ import java.nio.channels.ClosedChannelException;
  *   bytes 2-9   frame timestamp in milliseconds (big-endian int64)
  *   bytes 10..  Annex-B encoded NAL units
  * </pre>
+ * For two-way intercom the client sends binary messages back on the same socket, each carrying a
+ * raw G.711A (PCMA) audio frame, which is forwarded to the camera over its JT1078 connection.
  */
 public class VideoSocket implements Session.Listener.AutoDemanding, VideoStreamManager.FrameListener {
 
@@ -63,6 +65,16 @@ public class VideoSocket implements Session.Listener.AutoDemanding, VideoStreamM
     public void onWebSocketClose(int statusCode, String reason, Callback callback) {
         streamManager.removeSubscriber(deviceId, channel, this);
         session = null;
+        callback.succeed();
+    }
+
+    @Override
+    public void onWebSocketBinary(ByteBuffer payload, Callback callback) {
+        if (payload.hasRemaining()) {
+            byte[] audio = new byte[payload.remaining()];
+            payload.get(audio);
+            streamManager.sendAudioToCamera(deviceId, channel, audio);
+        }
         callback.succeed();
     }
 

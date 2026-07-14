@@ -42,6 +42,7 @@ Response: **`200`** = sent to the camera (online); **`202`** = queued (device of
 | Start live | `videoStart` | `{ "index": 1 }` |
 | Stop live/playback | `videoStop` | `{ "index": 1 }` |
 | Start playback | `videoPlayback` | `index`, `startTime`, `endTime`, opt. `playbackMode`, `playbackSpeed` |
+| Start intercom | `videoTalk` | `{ "index": 1 }` — two-way voice; stop with `videoStop` |
 | Pause playback | `videoPause` | `{ "index": 1 }` |
 | Resume playback | `videoResume` | `{ "index": 1 }` |
 | List recordings | `videoResources` | `index` (0 = all channels), `startTime`, `endTime` |
@@ -117,6 +118,22 @@ To show a Hikvision-style timeline of what's actually recorded:
 **Seeking:** playback is a live stream from the camera, so there's no random access. To "seek", **re-send `videoPlayback` with a new `startTime`** and reopen/refresh the socket. Expect a ~1–2 s reconnect.
 
 **Playback controls:** `videoPause` / `videoResume` hold and continue; `videoStop` ends. Fast-forward is `playbackMode:1` + `playbackSpeed` set on the `videoPlayback` request (not changeable mid-stream — re-request to change speed).
+
+---
+
+## 5b. Two-way intercom (talk to the camera)
+
+The camera has a mic **and** a speaker, so you can talk to the driver.
+
+1. Send `videoTalk { index: channel }` — the server issues `0x9101` with data type **2** (two-way voice) and the camera opens a JT1078 connection.
+2. Open the **same** media WebSocket for that `deviceId`/`channel`. You'll **receive** the camera's audio (intercom is audio-only — no video) exactly like §3.
+3. To **send** your mic audio: capture it, encode to **G.711A (PCMA), 8 kHz mono**, and send each frame as a **binary WebSocket message** back on that same socket (just the raw a-law bytes — no header). The server wraps each into a JT1078 RTP audio packet and forwards it to the camera, which plays it through its speaker.
+4. Stop with `videoStop { index: channel }` and close the socket.
+
+Notes:
+- **G.711A is trivial to encode** (a-law companding, 1 byte/sample) — both Android and iOS can do it in a few lines, or with the platform's built-in G.711 codec.
+- Intercom is **its own stream** on that channel — start it after stopping live/playback (same one-stream-per-channel rule). Use **echo cancellation** on the mic and don't route it to the local speaker, or you'll get feedback.
+- Downlink codec: the camera's reply audio is delivered with its payload-type byte; treat non-`98`/`99` as audio and decode accordingly (G.711A during intercom).
 
 ---
 

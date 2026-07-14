@@ -16,11 +16,13 @@
 package org.traccar.protocol;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.CompositeByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import org.traccar.BaseProtocolDecoder;
+import org.traccar.NetworkMessage;
 import org.traccar.Protocol;
 import org.traccar.database.DeviceLookupService;
 import org.traccar.helper.BitUtil;
@@ -43,6 +45,10 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
     private long streamDeviceId;
     private int streamChannel;
     private boolean sourceRegistered;
+
+    private VideoStreamManager.AudioSink audioSink;
+    private int talkSequence;
+    private long talkTimestamp;
 
     public Jt1078ProtocolDecoder(Protocol protocol) {
         super(protocol);
@@ -70,7 +76,9 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
         buf.readUnsignedShort(); // index
 
         int idLength = buf.getUnsignedShort(buf.readerIndex()) == 0 ? 10 : 6;
-        String uniqueId = Jt808ProtocolDecoder.decodeId(buf.readSlice(idLength));
+        ByteBuf idSlice = buf.readSlice(idLength);
+        byte[] rawId = ByteBufUtil.getBytes(idSlice, idSlice.readerIndex(), idLength, true);
+        String uniqueId = Jt808ProtocolDecoder.decodeId(idSlice);
         int videoChannel = buf.readUnsignedByte();
         int rawType = buf.readUnsignedByte();
         int dataType = BitUtil.from(rawType, 4);
@@ -99,6 +107,12 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
         // a previous live/playback connection open). Register this connection as the active source.
         if (!sourceRegistered) {
             streamManager.setActiveSource(streamDeviceId, videoChannel, this);
+            final Channel talkChannel = channel;
+            final SocketAddress talkAddress = remoteAddress;
+            final byte[] talkId = rawId;
+            final int talkLogicalChannel = videoChannel;
+            audioSink = audio -> sendAudioFrame(talkChannel, talkAddress, talkId, talkLogicalChannel, audio);
+            streamManager.registerAudioSink(streamDeviceId, videoChannel, audioSink);
             sourceRegistered = true;
         }
 
@@ -141,11 +155,39 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
         return null;
     }
 
+    /**
+     * Wraps one intercom audio frame from the app in a JT1078 RTP packet and writes it back to the
+     * camera over its own connection (two-way voice, data type 3). Payload is G.711A (PCMA).
+     */
+    private synchronized void sendAudioFrame(
+            Channel channel, SocketAddress remoteAddress, byte[] id, int logicalChannel, byte[] audio) {
+        if (channel == null || !channel.isActive() || audio.length == 0) {
+            return;
+        }
+        ByteBuf packet = Unpooled.buffer(30 + audio.length);
+        packet.writeInt(0x30316364); // RTP frame header identifier
+        packet.writeByte(0x81); // V=2, P=0, X=0, CC=1
+        packet.writeByte(0x80 | 6); // M=1, PT=6 (G.711A / PCMA)
+        packet.writeShort(talkSequence++ & 0xFFFF);
+        packet.writeBytes(id); // SIM (the same identifier the camera streams with)
+        packet.writeByte(logicalChannel);
+        packet.writeByte(0x30); // data type 3 (audio), subpackage 0 (atomic)
+        packet.writeLong(talkTimestamp); // relative timestamp, milliseconds
+        talkTimestamp += 20; // ~20 ms per G.711 frame
+        packet.writeShort(audio.length);
+        packet.writeBytes(audio);
+        channel.writeAndFlush(new NetworkMessage(packet, remoteAddress));
+    }
+
     @Override
     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
         super.channelInactive(ctx);
         if (streamDeviceId > 0) {
             streamManager.clearActiveSource(streamDeviceId, streamChannel, this);
+            if (audioSink != null) {
+                streamManager.clearAudioSink(streamDeviceId, streamChannel, audioSink);
+                audioSink = null;
+            }
             streamManager.removeStream(streamDeviceId, streamChannel);
         }
         if (frameBuffer != null) {

@@ -145,6 +145,20 @@ public class Jt808ProtocolEncoder extends BaseProtocolEncoder {
                     data.writeByte(0); // main stream
                     return decoder.formatMessage(
                             Jt808ProtocolDecoder.MSG_VIDEO_REQUEST, id, false, data);
+                case Command.TYPE_VIDEO_TALK:
+                    var talkConfig = getCacheManager().getConfig();
+                    String talkHost = URI.create(talkConfig.getString(Keys.WEB_URL)).getHost();
+                    int talkPort = talkConfig.getInteger(
+                            Keys.PROTOCOL_PORT.withPrefix(BaseProtocol.nameFromClass(Jt1078Protocol.class)));
+                    data.writeByte(talkHost.length());
+                    data.writeCharSequence(talkHost, StandardCharsets.US_ASCII);
+                    data.writeShort(talkPort); // tcp port
+                    data.writeShort(0); // udp port
+                    data.writeByte(command.getInteger(Command.KEY_INDEX, 1));
+                    data.writeByte(2); // two-way voice intercom
+                    data.writeByte(0); // main stream
+                    return decoder.formatMessage(
+                            Jt808ProtocolDecoder.MSG_VIDEO_REQUEST, id, false, data);
                 case Command.TYPE_VIDEO_STOP:
                     data.writeByte(command.getInteger(Command.KEY_INDEX, 1));
                     data.writeByte(0); // close audio/video transmission

@@ -34,9 +34,34 @@ public class VideoStreamManager {
     private final Map<String, DeviceStream> streams = new ConcurrentHashMap<>();
     private final Map<String, Set<FrameListener>> subscribers = new ConcurrentHashMap<>();
     private final Map<String, Object> activeSource = new ConcurrentHashMap<>();
+    private final Map<String, AudioSink> audioSinks = new ConcurrentHashMap<>();
 
     @Inject
     public VideoStreamManager() {}
+
+    /**
+     * Uplink audio path for two-way intercom: a JT1078 connection registers a sink that wraps an
+     * audio frame in a JT1078 RTP packet and writes it back to the camera. Called from a WebSocket
+     * thread as the app streams microphone audio.
+     */
+    public interface AudioSink {
+        void sendAudio(byte[] audio);
+    }
+
+    public void registerAudioSink(long deviceId, int channel, AudioSink sink) {
+        audioSinks.put(deviceId + "_" + channel, sink);
+    }
+
+    public void clearAudioSink(long deviceId, int channel, AudioSink sink) {
+        audioSinks.remove(deviceId + "_" + channel, sink);
+    }
+
+    public void sendAudioToCamera(long deviceId, int channel, byte[] audio) {
+        AudioSink sink = audioSinks.get(deviceId + "_" + channel);
+        if (sink != null) {
+            sink.sendAudio(audio);
+        }
+    }
 
     /**
      * Low-latency consumer of raw video frames (e.g. a WebSocket connection). Called synchronously
