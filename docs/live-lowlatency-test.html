@@ -94,9 +94,9 @@
         <select id="talkChannel"><option value="1">Talk to CH1 (road)</option><option value="2">Talk to CH2 (cabin)</option></select>
         <label style="margin-top:8px">Uplink codec (find what the camera accepts)</label>
         <select id="talkCodec">
-          <option value="g711a">G.711A / PCMA (8 kHz)</option>
-          <option value="pcm16">PCM S16BE (16 kHz)</option>
-          <option value="aac">AAC (browser encoder)</option>
+          <option value="aac">AAC (camera's codec — mobile-native)</option>
+          <option value="g711a">G.711A / PCMA (8 kHz — web test)</option>
+          <option value="pcm16">PCM S16BE (16 kHz — web test)</option>
         </select>
         <div class="btns"><button class="primary" id="talkBtn">🎤 Start talking</button></div>
         <div class="muted" style="margin-top:6px">Sends your mic to the camera speaker and plays the camera's reply (AAC). Its own stream (stops live/playback on that channel). Needs mic permission. Try each codec to find which one the camera plays cleanly.</div>
@@ -578,7 +578,7 @@ function adtsHeader(len, rate) {            // AAC-LC, mono
 }
 async function pickAacConfig() {            // browsers vary on which AAC rates they can encode
   for (const sampleRate of [16000, 44100, 48000, 32000, 22050]) {
-    for (const bitrate of [32000, 64000, 24000]) {
+    for (const bitrate of [64000, 96000, 48000, 128000, 32000]) {
       const cfg = { codec:'mp4a.40.2', sampleRate, numberOfChannels:1, bitrate };
       try { const s = await AudioEncoder.isConfigSupported(cfg); if (s && s.supported) return cfg; } catch (e) {}
     }
