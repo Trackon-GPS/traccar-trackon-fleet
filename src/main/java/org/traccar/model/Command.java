@@ -64,6 +64,7 @@ public class Command extends BaseCommand {
     public static final String TYPE_VIDEO_STOP = "videoStop";
     public static final String TYPE_VIDEO_PLAYBACK = "videoPlayback";
     public static final String TYPE_VIDEO_TALK = "videoTalk";
+    public static final String TYPE_VOICE_BROADCAST = "voiceBroadcast"; // one-way: send audio to camera speaker
     public static final String TYPE_VIDEO_PAUSE = "videoPause";
     public static final String TYPE_VIDEO_RESUME = "videoResume";
     public static final String TYPE_VIDEO_RESOURCES = "videoResources";

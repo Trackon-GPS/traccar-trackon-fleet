@@ -159,6 +159,20 @@ public class Jt808ProtocolEncoder extends BaseProtocolEncoder {
                     data.writeByte(0); // main stream
                     return decoder.formatMessage(
                             Jt808ProtocolDecoder.MSG_VIDEO_REQUEST, id, false, data);
+                case Command.TYPE_VOICE_BROADCAST:
+                    var bcastConfig = getCacheManager().getConfig();
+                    String bcastHost = URI.create(bcastConfig.getString(Keys.WEB_URL)).getHost();
+                    int bcastPort = bcastConfig.getInteger(
+                            Keys.PROTOCOL_PORT.withPrefix(BaseProtocol.nameFromClass(Jt1078Protocol.class)));
+                    data.writeByte(bcastHost.length());
+                    data.writeCharSequence(bcastHost, StandardCharsets.US_ASCII);
+                    data.writeShort(bcastPort); // tcp port
+                    data.writeShort(0); // udp port
+                    data.writeByte(command.getInteger(Command.KEY_INDEX, 1));
+                    data.writeByte(4); // central broadcast: one-way platform -> camera speaker
+                    data.writeByte(0); // main stream
+                    return decoder.formatMessage(
+                            Jt808ProtocolDecoder.MSG_VIDEO_REQUEST, id, false, data);
                 case Command.TYPE_VIDEO_STOP:
                     data.writeByte(command.getInteger(Command.KEY_INDEX, 1));
                     // control command: 4 closes two-way voice (intercom), 0 closes audio/video

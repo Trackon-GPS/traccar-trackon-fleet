@@ -79,6 +79,9 @@ class CameraClient(tk.Tk):
         self.btn_talk = ttk.Button(b, text="🎤 Talk (hold)", state="disabled")
         self.btn_live.pack(side="left", padx=3); self.btn_stop.pack(side="left", padx=3)
         self.btn_talk.pack(side="left", padx=3)
+        ttk.Label(b, text="mode").pack(side="left", padx=(8, 2))
+        self.mode_cb = ttk.Combobox(b, width=9, state="readonly", values=["broadcast", "two-way"]); self.mode_cb.set("broadcast")
+        self.mode_cb.pack(side="left")
         ttk.Label(b, text="codec").pack(side="left", padx=(8, 2))
         self.codec_cb = ttk.Combobox(b, width=7, state="readonly", values=list(CODECS)); self.codec_cb.set("aac")
         self.codec_cb.pack(side="left")
@@ -219,23 +222,25 @@ class CameraClient(tk.Tk):
         ch = self._channel()
         codec = self.codec_cb.get()
         pt, out_args = CODECS[codec]
-        self._cmd("videoTalk", {"index": ch})
+        transport = self.mode_cb.get()                 # 'broadcast' (one-way) | 'two-way'
+        self.two_way = transport == "two-way"
+        cmd = "videoTalk" if self.two_way else "voiceBroadcast"
+        self._cmd(cmd, {"index": ch})
         try:
             self._open_ws()
         except Exception as e:
             self._log("WebSocket error: " + str(e)); return
-        # only play the camera's audio if asked (avoids a PC-speaker→PC-mic feedback loop);
-        # leave it OFF and listen at the camera for a clean uplink test.
+        # broadcast is one-way (no camera audio); two-way can optionally play it (headphones!)
         audio = None
-        if self.hear_var.get():
+        if self.two_way and self.hear_var.get():
             audio = self._spawn(["ffplay", "-f", "aac", "-nodisp", "-autoexit", "-i", "pipe:0", "-loglevel", "quiet"], stdin=subprocess.PIPE)
         threading.Thread(target=self._demux_loop, args=(None, audio), daemon=True).start()
         mic = self._spawn(["ffmpeg", "-f", "avfoundation", "-i", ":0", "-ac", "1", *out_args, "-loglevel", "error", "pipe:1"],
                           stdout=subprocess.PIPE)
         threading.Thread(target=self._mic_loop, args=(mic, codec, pt), daemon=True).start()
-        self.status.config(text=f"TALK — CH{ch} (speak now)")
-        self.btn_talk.config(text="🎤 Talking… (release)")
-        self._log(f"Intercom started — codec={codec} (PT {pt}). Speak into the mic.")
+        self.status.config(text=f"{'TALK' if self.two_way else 'BROADCAST'} — CH{ch} (speak now)")
+        self.btn_talk.config(text="🎤 Sending… (release)")
+        self._log(f"{cmd} started — codec={codec} (PT {pt}), mode={transport}. Speak into the mic.")
 
     def _mic_loop(self, mic, codec, pt):
         sent = [0]; t0 = [time.time()]
@@ -279,8 +284,9 @@ class CameraClient(tk.Tk):
         if self.mode != "talk":
             return
         ch = self._channel()
+        two_way = getattr(self, "two_way", False)
         self._teardown()
-        self._cmd("videoStop", {"index": ch, "twoWay": True})
+        self._cmd("videoStop", {"index": ch, "twoWay": two_way})
         self.btn_talk.config(text="🎤 Talk (hold)")
         self.status.config(text="Connected")
         self.mode = None
@@ -292,7 +298,7 @@ class CameraClient(tk.Tk):
         if mode == "live":
             self._cmd("videoStop", {"index": ch})
         elif mode == "talk":
-            self._cmd("videoStop", {"index": ch, "twoWay": True})
+            self._cmd("videoStop", {"index": ch, "twoWay": getattr(self, "two_way", False)})
         self.mode = None
         self.status.config(text="Connected" if self.token else "Not connected")
 
