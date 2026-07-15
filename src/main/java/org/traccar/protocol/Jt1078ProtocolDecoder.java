@@ -28,11 +28,15 @@ import org.traccar.database.DeviceLookupService;
 import org.traccar.helper.BitUtil;
 import org.traccar.media.VideoStreamManager;
 import org.traccar.model.Device;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import jakarta.inject.Inject;
 import java.net.SocketAddress;
 
 public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(Jt1078ProtocolDecoder.class);
 
     private DeviceLookupService deviceLookupService;
     private VideoStreamManager streamManager;
@@ -168,6 +172,10 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
         }
         int payloadType = audio[0] & 0x7F;
         int bodyLength = audio.length - 1;
+        if (talkSequence == 0) {
+            LOGGER.info("intercom diag: writing first RTP audio to camera channel={} active={} PT={} bodyLen={}",
+                    logicalChannel, channel.isActive(), payloadType, bodyLength);
+        }
         ByteBuf packet = Unpooled.buffer(30 + bodyLength);
         packet.writeInt(0x30316364); // RTP frame header identifier
         packet.writeByte(0x81); // V=2, P=0, X=0, CC=1

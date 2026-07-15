@@ -47,7 +47,8 @@ def main():
     pt, out_args = CODECS[args.codec]
 
     # --- auth + device ---
-    tok = requests.post(base + "/api/session/token", headers=hdr, data="").text.strip().strip('"')
+    tok = requests.post(base + "/api/session/token",
+                        headers={**hdr, "Content-Type": "application/x-www-form-urlencoded"}, data="").text.strip().strip('"')
     if not tok or len(tok) < 8:
         sys.exit("login failed (check user/password/server)")
     dev = args.device

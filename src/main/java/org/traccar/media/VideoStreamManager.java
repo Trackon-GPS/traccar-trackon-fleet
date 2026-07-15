@@ -17,6 +17,8 @@ package org.traccar.media;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
@@ -27,11 +29,16 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Singleton
 public class VideoStreamManager {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(VideoStreamManager.class);
+
     private static final int MAX_SEGMENTS = 5;
+
+    private final AtomicLong audioRecvCount = new AtomicLong();
 
     private final Map<String, DeviceStream> streams = new ConcurrentHashMap<>();
     private final Map<String, Set<FrameListener>> subscribers = new ConcurrentHashMap<>();
@@ -58,12 +65,15 @@ public class VideoStreamManager {
         audioSinks.put(key, sink);
         // flush any mic audio that arrived before the camera's two-way connection was ready
         Deque<byte[]> pending = pendingAudio.remove(key);
+        int flushed = 0;
         if (pending != null) {
             byte[] frame;
             while ((frame = pending.pollFirst()) != null) {
-                sink.sendAudio(frame);
+                sink.sendAudio(frame); flushed++;
             }
         }
+        LOGGER.info("intercom diag: audio sink registered device={} channel={}, flushed {} buffered frame(s)",
+                deviceId, channel, flushed);
     }
 
     public void clearAudioSink(long deviceId, int channel, AudioSink sink) {
@@ -74,10 +84,20 @@ public class VideoStreamManager {
 
     public void sendAudioToCamera(long deviceId, int channel, byte[] audio) {
         String key = deviceId + "_" + channel;
+        long n = audioRecvCount.incrementAndGet();
+        int tagPt = audio.length > 0 ? audio[0] & 0x7F : -1;
         AudioSink sink = audioSinks.get(key);
         if (sink != null) {
+            if (n % 100 == 1) {
+                LOGGER.info("intercom diag: forwarding audio device={} channel={} frame#{} len={} tagPT={}",
+                        deviceId, channel, n, audio.length, tagPt);
+            }
             sink.sendAudio(audio);
         } else {
+            if (n % 100 == 1) {
+                LOGGER.info("intercom diag: received audio but NO sink device={} channel={} frame#{} — buffering "
+                        + "(camera not connected for two-way?)", deviceId, channel, n);
+            }
             // camera hasn't connected back yet — buffer briefly so the first words aren't lost
             Deque<byte[]> pending = pendingAudio.computeIfAbsent(key, k -> new ConcurrentLinkedDeque<>());
             pending.addLast(audio);
