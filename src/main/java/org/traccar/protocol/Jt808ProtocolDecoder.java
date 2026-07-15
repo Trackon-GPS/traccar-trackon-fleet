@@ -588,6 +588,9 @@ public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
 
             sendGeneralResponse(channel, remoteAddress, id, type, index);
 
+            LOGGER.info("intercom diag: 0x1003 raw body ({} bytes) = {}", buf.readableBytes(),
+                    ByteBufUtil.hexDump(buf, buf.readerIndex(), buf.readableBytes()));
+
             if (buf.readableBytes() >= 7) {
                 int audioCoding = buf.readUnsignedByte();
                 int audioChannels = buf.readUnsignedByte();
