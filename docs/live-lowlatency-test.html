@@ -705,7 +705,7 @@ function talkStop() {
   try { talk.ctx.close(); } catch (e) {}
   try { talk.ws && talk.ws.close(); } catch (e) {}
   talk = null;
-  sendCmd('videoStop', ch).catch(() => {});
+  sendCmd('videoStop', ch, { twoWay: true }).catch(() => {});  // control 4: close two-way voice
   $('#talkBtn').textContent = '🎤 Start talking'; $('#talkBtn').classList.remove('stop'); $('#talkBtn').classList.add('primary');
   log(`Intercom CH${ch} stopped.`);
 }

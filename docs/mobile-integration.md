@@ -128,7 +128,7 @@ The camera has a mic **and** a speaker, so you can talk to the driver.
 1. Send `videoTalk { index: channel }` — the server issues `0x9101` with data type **2** (two-way voice) and the camera opens a JT1078 connection.
 2. Open the **same** media WebSocket for that `deviceId`/`channel`. You'll **receive** the camera's audio (intercom is audio-only — no video) exactly like §3 — it's **AAC (payload type 19)**, same as live.
 3. To **send** your mic audio: capture it, encode to **AAC-LC, 16 kHz mono** (the JC181's own codec — it will *not* accept G.711/PCM), ADTS-frame it, and send each frame as a **binary WebSocket message** back on that same socket. The server wraps each into a JT1078 RTP audio packet (PT 19) and forwards it to the camera, which plays it through its speaker.
-4. Stop with `videoStop { index: channel }` and close the socket.
+4. Stop with `videoStop { index: channel, twoWay: true }` and close the socket (`twoWay:true` sends the two-way-voice close, control 4).
 
 Notes:
 - **Match the camera's codec exactly: AAC-LC, 16 kHz, mono.** The JC181 streams AAC and expects the uplink in the same format; sending G.711A/PCMA produces static/silence. On Android use `MediaCodec` (`audio/mp4a-latm`), on iOS `AudioConverter`/`AVAudioEngine` — both encode AAC natively.

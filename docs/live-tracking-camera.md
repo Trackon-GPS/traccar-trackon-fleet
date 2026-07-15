@@ -79,7 +79,7 @@ open  wss …/api/stream/video?deviceId=id&channel=channel&token=…   // same s
   **binary WebSocket message** back on that same socket. The server forwards it to the camera's speaker.
   - **Android:** `MediaCodec` (`audio/mp4a-latm`) at 16 kHz mono; prepend a 7-byte ADTS header to each output buffer.
   - **iOS:** `AudioConverter`/`AVAudioEngine` encode AAC; ADTS-frame and send.
-- **Stop:** `videoStop { index: channel }` + close the socket.
+- **Stop:** `videoStop { index: channel, twoWay: true }` + close the socket (`twoWay:true` sends the two-way-voice close).
 
 Rules: intercom is **audio-only** and is **its own stream** on that channel — stop live on that channel first
 (see §6). Use **echo cancellation** and don't route the mic to the local speaker, or you'll get feedback.

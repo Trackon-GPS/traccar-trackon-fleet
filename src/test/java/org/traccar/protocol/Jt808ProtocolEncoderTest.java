@@ -66,6 +66,17 @@ public class Jt808ProtocolEncoderTest extends ProtocolTest {
             binary("7e920500180b3a73ce2ff20000012501231015122501231018120000000000000000000000d27e"),
             encodeCommand(encoder, decoder, command));
 
+        command.setType(Command.TYPE_VIDEO_STOP);
+        command.set(Command.KEY_INDEX, 1);
+        verifyFrame( // control 0: close audio/video
+            binary("7e910200040b3a73ce2ff2000001000000c77e"),
+            encodeCommand(encoder, decoder, command));
+
+        command.set(Command.KEY_TWO_WAY, true);
+        verifyFrame( // control 4: close two-way voice (intercom)
+            binary("7e910200040b3a73ce2ff2000001040000c37e"),
+            encodeCommand(encoder, decoder, command));
+
     }
 
     @Test

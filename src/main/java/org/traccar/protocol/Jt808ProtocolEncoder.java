@@ -161,7 +161,8 @@ public class Jt808ProtocolEncoder extends BaseProtocolEncoder {
                             Jt808ProtocolDecoder.MSG_VIDEO_REQUEST, id, false, data);
                 case Command.TYPE_VIDEO_STOP:
                     data.writeByte(command.getInteger(Command.KEY_INDEX, 1));
-                    data.writeByte(0); // close audio/video transmission
+                    // control command: 4 closes two-way voice (intercom), 0 closes audio/video
+                    data.writeByte(command.getBoolean(Command.KEY_TWO_WAY) ? 4 : 0);
                     data.writeByte(0); // close both audio and video
                     data.writeByte(0); // main stream
                     return decoder.formatMessage(

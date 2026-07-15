@@ -30,7 +30,8 @@ open wss://YOUR_SERVER/api/stream/video?deviceId=id&channel=channel&token=<token
 ── UPLINK (app → camera): send binary messages on the SAME socket ──
    each message = one AAC-LC frame, ADTS-framed, 16 kHz mono  →  camera plays it on its speaker
 
-stop:  POST videoStop { index: channel }   +   close the socket
+stop:  POST videoStop { index: channel, twoWay: true }   +   close the socket
+       (twoWay:true → 0x9102 control 4 "close two-way voice"; without it the channel may stay busy)
 ```
 
 Incoming frame layout (only audio matters here):
@@ -210,7 +211,7 @@ update byte 2's freq-index nibble and the capture/encoder rate together.
 | Media socket | `wss://…/api/stream/video?deviceId=&channel=&token=` (binary, bidirectional) |
 | Downlink audio | frames with byte 0 = **19** → AAC, ADTS-framed, at `bytes[10..]` |
 | Uplink audio | send binary messages = **AAC-LC 16 kHz mono, ADTS-framed** |
-| Stop intercom | `POST videoStop { index: channel }` + close socket |
+| Stop intercom | `POST videoStop { index: channel, twoWay: true }` + close socket |
 | Codec | AAC-LC, 16 kHz, mono — both directions, no exceptions |
 
 See [live-tracking-camera.md](live-tracking-camera.md) for where intercom fits in the overall camera screen,

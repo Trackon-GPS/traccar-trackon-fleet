@@ -21,10 +21,12 @@ import io.netty.buffer.Unpooled;
 import jakarta.inject.Inject;
 import jakarta.inject.Singleton;
 
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 
 @Singleton
 public class VideoStreamManager {
@@ -35,6 +37,9 @@ public class VideoStreamManager {
     private final Map<String, Set<FrameListener>> subscribers = new ConcurrentHashMap<>();
     private final Map<String, Object> activeSource = new ConcurrentHashMap<>();
     private final Map<String, AudioSink> audioSinks = new ConcurrentHashMap<>();
+    private final Map<String, Deque<byte[]>> pendingAudio = new ConcurrentHashMap<>();
+
+    private static final int MAX_PENDING_AUDIO = 50; // cap early-audio buffer; guards against leaks
 
     @Inject
     public VideoStreamManager() {}
@@ -49,17 +54,36 @@ public class VideoStreamManager {
     }
 
     public void registerAudioSink(long deviceId, int channel, AudioSink sink) {
-        audioSinks.put(deviceId + "_" + channel, sink);
+        String key = deviceId + "_" + channel;
+        audioSinks.put(key, sink);
+        // flush any mic audio that arrived before the camera's two-way connection was ready
+        Deque<byte[]> pending = pendingAudio.remove(key);
+        if (pending != null) {
+            byte[] frame;
+            while ((frame = pending.pollFirst()) != null) {
+                sink.sendAudio(frame);
+            }
+        }
     }
 
     public void clearAudioSink(long deviceId, int channel, AudioSink sink) {
-        audioSinks.remove(deviceId + "_" + channel, sink);
+        String key = deviceId + "_" + channel;
+        audioSinks.remove(key, sink);
+        pendingAudio.remove(key);
     }
 
     public void sendAudioToCamera(long deviceId, int channel, byte[] audio) {
-        AudioSink sink = audioSinks.get(deviceId + "_" + channel);
+        String key = deviceId + "_" + channel;
+        AudioSink sink = audioSinks.get(key);
         if (sink != null) {
             sink.sendAudio(audio);
+        } else {
+            // camera hasn't connected back yet — buffer briefly so the first words aren't lost
+            Deque<byte[]> pending = pendingAudio.computeIfAbsent(key, k -> new ConcurrentLinkedDeque<>());
+            pending.addLast(audio);
+            while (pending.size() > MAX_PENDING_AUDIO) {
+                pending.pollFirst();
+            }
         }
     }
 
