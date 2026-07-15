@@ -52,7 +52,7 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
 
     private VideoStreamManager.AudioSink audioSink;
     private int talkSequence;
-    private long talkTimestamp;
+    private long talkStartTime;
 
     public Jt1078ProtocolDecoder(Protocol protocol) {
         super(protocol);
@@ -184,8 +184,10 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
         packet.writeBytes(id); // SIM (the same identifier the camera streams with)
         packet.writeByte(logicalChannel);
         packet.writeByte(0x30); // data type 3 (audio), subpackage 0 (atomic)
-        packet.writeLong(talkTimestamp); // relative timestamp, milliseconds
-        talkTimestamp += 40;
+        if (talkStartTime == 0) {
+            talkStartTime = System.currentTimeMillis();
+        }
+        packet.writeLong(System.currentTimeMillis() - talkStartTime); // real elapsed ms since talk start
         packet.writeShort(bodyLength);
         packet.writeBytes(audio, 1, bodyLength);
         channel.writeAndFlush(new NetworkMessage(packet, remoteAddress));
