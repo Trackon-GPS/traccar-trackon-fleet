@@ -169,6 +169,10 @@ public class Jt808ProtocolEncoder extends BaseProtocolEncoder {
                     data.writeByte(0); // main stream
                     return decoder.formatMessage(
                             Jt808ProtocolDecoder.MSG_VIDEO_REQUEST, id, false, data);
+                case Command.TYPE_GET_AV_PROPERTIES:
+                    // query terminal audio/video properties (0x9003); reply 0x1003 is logged
+                    return decoder.formatMessage(
+                            Jt808ProtocolDecoder.MSG_QUERY_AV_ATTRIBUTES, id, false, data);
                 case Command.TYPE_VOICE_BROADCAST:
                     var bcastConfig = getCacheManager().getConfig();
                     String bcastHost = URI.create(bcastConfig.getString(Keys.WEB_URL)).getHost();

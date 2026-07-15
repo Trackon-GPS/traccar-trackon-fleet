@@ -100,6 +100,8 @@ public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
     public static final int MSG_VIDEO_PLAYBACK = 0x9201;
     public static final int MSG_VIDEO_QUERY = 0x9205;
     public static final int MSG_VIDEO_RESOURCE_LIST = 0x1205;
+    public static final int MSG_QUERY_AV_ATTRIBUTES = 0x9003;
+    public static final int MSG_AV_ATTRIBUTES = 0x1003;
 
     public static final int RESULT_SUCCESS = 0;
 
@@ -581,6 +583,25 @@ public class Jt808ProtocolDecoder extends BaseProtocolDecoder {
             sendGeneralResponse(channel, remoteAddress, id, type, index);
 
             return decodeVideoResources(deviceSession, buf);
+
+        } else if (type == MSG_AV_ATTRIBUTES) {
+
+            sendGeneralResponse(channel, remoteAddress, id, type, index);
+
+            if (buf.readableBytes() >= 7) {
+                int audioCoding = buf.readUnsignedByte();
+                int audioChannels = buf.readUnsignedByte();
+                int audioSampleRate = buf.readUnsignedByte(); // 0:8k 1:22.05k 2:44.1k 3:48k
+                int audioSampleBits = buf.readUnsignedByte(); // 0:8bit 1:16bit 2:32bit
+                int audioFrameLength = buf.readUnsignedShort();
+                int audioOutputSupported = buf.readUnsignedByte(); // 0:no 1:yes
+                LOGGER.info("intercom diag: 0x1003 A/V properties — audioCoding={} channels={} sampleRate={} "
+                        + "sampleBits={} frameLen={} AUDIO_OUTPUT_SUPPORTED={}",
+                        audioCoding, audioChannels, audioSampleRate, audioSampleBits,
+                        audioFrameLength, audioOutputSupported);
+            }
+
+            return null;
 
         }
 

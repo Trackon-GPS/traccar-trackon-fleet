@@ -41,6 +41,7 @@ public class Jt808Protocol extends BaseProtocol {
                 Command.TYPE_VIDEO_PLAYBACK,
                 Command.TYPE_VIDEO_TALK,
                 Command.TYPE_VOICE_BROADCAST,
+                Command.TYPE_GET_AV_PROPERTIES,
                 Command.TYPE_VIDEO_PAUSE,
                 Command.TYPE_VIDEO_RESUME,
                 Command.TYPE_VIDEO_RESOURCES);

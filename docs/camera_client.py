@@ -96,6 +96,7 @@ class CameraClient(tk.Tk):
         self.tts_entry = ttk.Entry(t); self.tts_entry.insert(0, "Hello from the office")
         self.tts_entry.pack(side="left", fill="x", expand=True, padx=6)
         ttk.Button(t, text="Speak", command=self.speak).pack(side="left")
+        ttk.Button(t, text="Query A/V props", command=self.query_av).pack(side="left", padx=(8, 0))
 
         self.status = ttk.Label(self, text="Not connected", anchor="w", padding=(10, 2))
         self.status.pack(fill="x")
@@ -162,6 +163,12 @@ class CameraClient(tk.Tk):
         if text:
             self._cmd("message", {"message": text})
             self._log(f'TTS "{text}" sent — the camera should speak it.')
+
+    def query_av(self):                               # ask the camera for its A/V properties (0x9003)
+        if not self.token or self._device_id() is None:
+            self._log("Connect and pick a camera first."); return
+        self._cmd("getAvProperties", {})
+        self._log("0x9003 sent — the 0x1003 reply (codec + AUDIO_OUTPUT_SUPPORTED) is logged in the server log.")
 
     def _device_id(self):
         sel = self.device_cb.get()
