@@ -53,6 +53,7 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
     private VideoStreamManager.AudioSink audioSink;
     private int talkSequence;
     private long talkStartTime;
+    private boolean downlinkAudioLogged;
 
     public Jt1078ProtocolDecoder(Protocol protocol) {
         super(protocol);
@@ -122,6 +123,13 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
 
         ByteBuf body = buf.readRetainedSlice(bodyLength);
 
+        if (dataType == 3 && !downlinkAudioLogged) {
+            downlinkAudioLogged = true;
+            LOGGER.info("intercom diag: camera DOWNLINK audio PT={} bodyLen={} firstBytes={}",
+                    payloadType, bodyLength,
+                    ByteBufUtil.hexDump(body, body.readerIndex(), Math.min(bodyLength, 24)));
+        }
+
         if (subpackageType == 0) {
             boolean isKeyFrame = dataType == 0;
             streamManager.handleFrame(streamDeviceId, videoChannel, this, body, timestamp, isKeyFrame, payloadType);
@@ -173,8 +181,9 @@ public class Jt1078ProtocolDecoder extends BaseProtocolDecoder {
         int payloadType = audio[0] & 0x7F;
         int bodyLength = audio.length - 1;
         if (talkSequence == 0) {
-            LOGGER.info("intercom diag: writing first RTP audio to camera channel={} active={} PT={} bodyLen={}",
-                    logicalChannel, channel.isActive(), payloadType, bodyLength);
+            LOGGER.info("intercom diag: UPLINK audio to camera channel={} active={} PT={} bodyLen={} firstBytes={}",
+                    logicalChannel, channel.isActive(), payloadType, bodyLength,
+                    ByteBufUtil.hexDump(audio, 1, Math.min(bodyLength, 24)));
         }
         ByteBuf packet = Unpooled.buffer(30 + bodyLength);
         packet.writeInt(0x30316364); // RTP frame header identifier
