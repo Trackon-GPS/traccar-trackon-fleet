@@ -87,6 +87,16 @@ public class Jt808ProtocolEncoder extends BaseProtocolEncoder {
                     } else {
                         return Unpooled.wrappedBuffer(DataConverter.parseHex(command.getString(Command.KEY_DATA)));
                     }
+                case Command.TYPE_MESSAGE:
+                    // TTS: make the camera read the text aloud through its speaker (0x8300)
+                    data.writeByte(0x0b); // flag: notification (bits 0-1) + read out by terminal / TTS (bit 3)
+                    if (protocolVersion != null) {
+                        data.writeByte(1); // text type: notification (2019 protocol adds this byte)
+                    }
+                    var ttsCharset = Charset.isSupported("GBK") ? Charset.forName("GBK") : StandardCharsets.US_ASCII;
+                    data.writeCharSequence(command.getString(Command.KEY_MESSAGE), ttsCharset);
+                    return decoder.formatMessage(
+                            Jt808ProtocolDecoder.MSG_SEND_TEXT_MESSAGE, id, false, data);
                 case Command.TYPE_REBOOT_DEVICE:
                     data.writeByte(1); // number of parameters
                     data.writeByte(0x23); // parameter id

@@ -91,6 +91,12 @@ class CameraClient(tk.Tk):
         self.btn_talk.bind("<ButtonPress-1>", lambda e: self.talk_start())
         self.btn_talk.bind("<ButtonRelease-1>", lambda e: self.talk_stop())
 
+        t = ttk.Frame(self, padding=(10, 4)); t.pack(fill="x")
+        ttk.Label(t, text="🗣 TTS").pack(side="left")
+        self.tts_entry = ttk.Entry(t); self.tts_entry.insert(0, "Hello from the office")
+        self.tts_entry.pack(side="left", fill="x", expand=True, padx=6)
+        ttk.Button(t, text="Speak", command=self.speak).pack(side="left")
+
         self.status = ttk.Label(self, text="Not connected", anchor="w", padding=(10, 2))
         self.status.pack(fill="x")
         self.log = tk.Text(self, height=18, bg="#111", fg="#ddd", font=("Menlo", 10)); self.log.pack(fill="both", expand=True, padx=10, pady=6)
@@ -148,6 +154,14 @@ class CameraClient(tk.Tk):
             except Exception as e:
                 self._log("Connect error: " + repr(e))
         threading.Thread(target=work, daemon=True).start()
+
+    def speak(self):                                  # TTS: make the camera read the text aloud
+        if not self.token or self._device_id() is None:
+            self._log("Connect and pick a camera first."); return
+        text = self.tts_entry.get().strip()
+        if text:
+            self._cmd("message", {"message": text})
+            self._log(f'TTS "{text}" sent — the camera should speak it.')
 
     def _device_id(self):
         sel = self.device_cb.get()

@@ -77,6 +77,12 @@ public class Jt808ProtocolEncoderTest extends ProtocolTest {
             binary("7e910200040b3a73ce2ff2000001040000c37e"),
             encodeCommand(encoder, decoder, command));
 
+        command.setType(Command.TYPE_MESSAGE);
+        command.set(Command.KEY_MESSAGE, "Test");
+        verifyFrame( // 0x8300 TTS: flag 0x0b (read out by terminal) + text
+            binary("7e830000050b3a73ce2ff200000b54657374ea7e"),
+            encodeCommand(encoder, decoder, command));
+
     }
 
     @Test

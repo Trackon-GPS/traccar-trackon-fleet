@@ -29,6 +29,7 @@ public class Jt808Protocol extends BaseProtocol {
     public Jt808Protocol(Config config) {
         setSupportedDataCommands(
                 Command.TYPE_CUSTOM,
+                Command.TYPE_MESSAGE,
                 Command.TYPE_REBOOT_DEVICE,
                 Command.TYPE_POSITION_PERIODIC,
                 Command.TYPE_ALARM_ARM,
