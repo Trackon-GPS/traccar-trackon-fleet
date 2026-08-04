@@ -37,6 +37,7 @@ public class TrackonobdProtocol extends BaseProtocol {
     public TrackonobdProtocol(Config config) {
         setSupportedDataCommands(
                 Command.TYPE_CUSTOM,
+                Command.TYPE_CONFIGURATION,
                 Command.TYPE_REBOOT_DEVICE,
                 Command.TYPE_FACTORY_RESET,
                 Command.TYPE_POWER_OFF,

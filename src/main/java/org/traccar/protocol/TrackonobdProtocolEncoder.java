@@ -29,6 +29,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.Set;
 import java.util.TimeZone;
 
 /**
@@ -53,6 +54,19 @@ public class TrackonobdProtocolEncoder extends BaseProtocolEncoder {
 
     private static final int PARAMETER_REPORTING_INTERVAL = 0x0029;
 
+    private static final Set<Integer> PARAMETERS_BYTE = Set.of(
+            0x0084, 0xF00F, 0xF010, 0xF012, 0xF013, 0xF015, 0xF016, 0xF017, 0xF018, 0xF019,
+            0xF01A, 0xF01B, 0xF01F, 0xF020, 0xF024, 0xF20A, 0xF215);
+
+    private static final Set<Integer> PARAMETERS_WORD = Set.of(
+            0x0031, 0x005B, 0x005C, 0x005D, 0x005E, 0xF000, 0xF001, 0xF203, 0xF204, 0xF205,
+            0xF206, 0xF207, 0xF208, 0xF209, 0xF20B, 0xF20C, 0xF20D, 0xF20E, 0xF216, 0xF217,
+            0xF218, 0xF219);
+
+    private static final Set<Integer> PARAMETERS_STRING = Set.of(
+            0x0010, 0x0011, 0x0012, 0x0013, 0x0083, 0xF005, 0xF006, 0xF007, 0xF008, 0xF01C,
+            0xF01D, 0xF01E, 0xF021, 0xF022, 0xF025);
+
     public TrackonobdProtocolEncoder(Protocol protocol) {
         super(protocol);
     }
@@ -63,8 +77,8 @@ public class TrackonobdProtocolEncoder extends BaseProtocolEncoder {
         ByteBuf id = TrackonobdProtocolDecoder.encodeId(getUniqueId(command.getDeviceId()));
         try {
             return switch (command.getType()) {
-                case Command.TYPE_CUSTOM -> Unpooled.wrappedBuffer(
-                        DataConverter.parseHex(command.getString(Command.KEY_DATA)));
+                case Command.TYPE_CUSTOM -> customFrame(command);
+                case Command.TYPE_CONFIGURATION -> configuration(command, id);
                 case Command.TYPE_ENGINE_STOP -> vehicleControl(command, id, CONTROL_IGNITION_OFF);
                 case Command.TYPE_ENGINE_RESUME -> vehicleControl(command, id, CONTROL_IGNITION_ON);
                 case Command.TYPE_ALARM_ARM -> vehicleControl(command, id, CONTROL_ANTI_THEFT_ON);
@@ -81,6 +95,116 @@ public class TrackonobdProtocolEncoder extends BaseProtocolEncoder {
         } finally {
             id.release();
         }
+    }
+
+    /**
+     * A custom command is a complete pre-built frame, delimiters and check byte included, passed
+     * through untouched apart from the escaping applied by the frame encoder.
+     */
+    private ByteBuf customFrame(Command command) {
+        String data = command.getString(Command.KEY_DATA);
+        if (data == null || !data.matches("(?i)[0-9a-f\\s]+") || data.replaceAll("\\s", "").length() % 2 != 0) {
+            throw new IllegalArgumentException(
+                    "Custom command data must be an even length hex string containing a whole frame. "
+                            + "To change device parameters use the configuration command instead, "
+                            + "for example F00E=30,F00F=1");
+        }
+        return Unpooled.wrappedBuffer(DataConverter.parseHex(data.replaceAll("\\s", "")));
+    }
+
+    /**
+     * Sections 9.7 and 9.8: parameter setting 0x8103 and parameter query 0x8106.
+     *
+     * <p>The data is a comma separated list. A leading question mark makes it a query, otherwise
+     * each item assigns a value, for example {@code F00E=30,F00F=1}. Widths come from table 4; an
+     * unrecognised parameter defaults to a double word and can be overridden as {@code F00E:2=30}.
+     */
+    private ByteBuf configuration(Command command, ByteBuf id) {
+
+        String data = command.getString(Command.KEY_DATA);
+        if (data == null || data.isBlank()) {
+            throw new IllegalArgumentException("Configuration command requires data, for example F00E=30");
+        }
+        data = data.trim();
+
+        ByteBuf body = Unpooled.buffer();
+        boolean query = data.startsWith("?");
+        String[] items = (query ? data.substring(1) : data).split(",");
+        body.writeByte(items.length);
+
+        for (String item : items) {
+            String entry = item.trim();
+            if (query) {
+                body.writeShort(parseParameterId(entry));
+                continue;
+            }
+            int separator = entry.indexOf('=');
+            if (separator < 0) {
+                body.release();
+                throw new IllegalArgumentException("Expected parameter=value but found " + entry);
+            }
+            String name = entry.substring(0, separator).trim();
+            String value = entry.substring(separator + 1).trim();
+
+            Integer width = null;
+            int widthMark = name.indexOf(':');
+            if (widthMark >= 0) {
+                width = Integer.parseInt(name.substring(widthMark + 1).trim());
+                name = name.substring(0, widthMark).trim();
+            }
+
+            int parameterId = parseParameterId(name);
+            body.writeShort(parameterId);
+            writeParameterValue(body, parameterId, width, value);
+        }
+
+        return TrackonobdProtocolDecoder.formatMessage(
+                query ? TrackonobdProtocolDecoder.MSG_QUERY_PARAMETERS
+                        : TrackonobdProtocolDecoder.MSG_SET_PARAMETERS, id, 0, body);
+    }
+
+    private int parseParameterId(String name) {
+        String value = name.startsWith("0x") || name.startsWith("0X") ? name.substring(2) : name;
+        try {
+            return Integer.parseInt(value, 16);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Parameter id must be hexadecimal, for example F00E, but found " + name);
+        }
+    }
+
+    private void writeParameterValue(ByteBuf body, int parameterId, Integer width, String value) {
+        if (width == null && PARAMETERS_STRING.contains(parameterId)) {
+            body.writeByte(value.length());
+            body.writeCharSequence(value, StandardCharsets.US_ASCII);
+            return;
+        }
+        int length = width != null ? width : parameterWidth(parameterId);
+        long number;
+        try {
+            number = value.startsWith("0x") || value.startsWith("0X")
+                    ? Long.parseLong(value.substring(2), 16)
+                    : Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Parameter " + String.format("%04X", parameterId)
+                    + " expects a number but found " + value);
+        }
+        body.writeByte(length);
+        switch (length) {
+            case 1 -> body.writeByte((int) number);
+            case 2 -> body.writeShort((int) number);
+            case 4 -> body.writeInt((int) number);
+            default -> throw new IllegalArgumentException("Unsupported parameter width " + length);
+        }
+    }
+
+    private int parameterWidth(int parameterId) {
+        if (PARAMETERS_BYTE.contains(parameterId)) {
+            return 1;
+        }
+        if (PARAMETERS_WORD.contains(parameterId)) {
+            return 2;
+        }
+        return 4;
     }
 
     /**
