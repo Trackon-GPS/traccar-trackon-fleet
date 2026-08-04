@@ -40,6 +40,7 @@ public class TrackonobdProtocol extends BaseProtocol {
                 Command.TYPE_CONFIGURATION,
                 Command.TYPE_REBOOT_DEVICE,
                 Command.TYPE_FACTORY_RESET,
+                Command.TYPE_FIRMWARE_UPDATE,
                 Command.TYPE_POWER_OFF,
                 Command.TYPE_POSITION_PERIODIC,
                 Command.TYPE_ENGINE_STOP,

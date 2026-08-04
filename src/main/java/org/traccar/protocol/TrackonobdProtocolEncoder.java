@@ -49,9 +49,16 @@ public class TrackonobdProtocolEncoder extends BaseProtocolEncoder {
     public static final int CONTROL_ANTI_THEFT_ON = 0x15;
     public static final int CONTROL_ANTI_THEFT_OFF = 0x16;
 
-    private static final int TERMINAL_CONTROL_POWER_OFF = 3;
-    private static final int TERMINAL_CONTROL_RESET = 4;
-    private static final int TERMINAL_CONTROL_FACTORY_RESET = 5;
+    // table 16, reachable in full through the configuration command as control=<n>
+    public static final int TERMINAL_CONTROL_POWER_OFF = 3;
+    public static final int TERMINAL_CONTROL_RESET = 4;
+    public static final int TERMINAL_CONTROL_FACTORY_RESET = 5;
+    public static final int TERMINAL_CONTROL_DISCONNECT = 6;
+    public static final int TERMINAL_CONTROL_RADIO_OFF = 7;
+    public static final int TERMINAL_CONTROL_UPGRADE_MCU = 0xA1;
+    public static final int TERMINAL_CONTROL_UPGRADE_SYSTEM = 0xA2;
+    public static final int TERMINAL_CONTROL_READ_MCU_LOG = 0xB1;
+    public static final int TERMINAL_CONTROL_READ_SYSTEM_LOG = 0xB2;
 
     private static final int PARAMETER_REPORTING_INTERVAL = 0x0029;
 
@@ -89,6 +96,7 @@ public class TrackonobdProtocolEncoder extends BaseProtocolEncoder {
                 case Command.TYPE_REBOOT_DEVICE -> terminalControl(id, TERMINAL_CONTROL_RESET);
                 case Command.TYPE_POWER_OFF -> terminalControl(id, TERMINAL_CONTROL_POWER_OFF);
                 case Command.TYPE_FACTORY_RESET -> terminalControl(id, TERMINAL_CONTROL_FACTORY_RESET);
+                case Command.TYPE_FIRMWARE_UPDATE -> terminalControl(id, TERMINAL_CONTROL_UPGRADE_SYSTEM);
                 case Command.TYPE_POSITION_PERIODIC -> positionPeriodic(command, id);
                 case Command.TYPE_MESSAGE -> textMessage(command, id);
                 default -> null;
@@ -152,6 +160,17 @@ public class TrackonobdProtocolEncoder extends BaseProtocolEncoder {
         }
         data = data.trim();
 
+        String directive = data.toLowerCase(Locale.ROOT);
+        if (directive.startsWith("control=")) {
+            return terminalControl(id, (int) parseNumber(data.substring("control=".length()).trim()));
+        }
+        if (directive.startsWith("geofence=")) {
+            return geofence(id, data.substring("geofence=".length()).trim());
+        }
+        if (directive.startsWith("canlearn=")) {
+            return canLearning(command, id, data.substring("canlearn=".length()).trim());
+        }
+
         ByteBuf body = Unpooled.buffer();
         boolean query = data.startsWith("?");
         String[] items = (query ? data.substring(1) : data).split(",");
@@ -188,6 +207,139 @@ public class TrackonobdProtocolEncoder extends BaseProtocolEncoder {
                         : TrackonobdProtocolDecoder.MSG_SET_PARAMETERS, id, 0, body);
     }
 
+    /**
+     * Sections 9.15 to 9.18: circular area 0x8600, delete circular 0x8601, square area 0x8602 and
+     * delete square 0x8603. Device side geofences alarm without a round trip to the server.
+     *
+     * <p>Accepted forms, where an id of {@code all} deletes every area of that shape:
+     * {@code circle,add,<id>,<lat>,<lon>,<radius>},
+     * {@code rect,add,<id>,<lat1>,<lon1>,<lat2>,<lon2>},
+     * {@code circle,delete,<id>} and {@code rect,delete,<id>}.
+     */
+    private ByteBuf geofence(ByteBuf id, String spec) {
+
+        String[] parts = spec.split(",");
+        if (parts.length < 3) {
+            throw new IllegalArgumentException(
+                    "Expected geofence=circle|rect,add|delete,<id>[,coordinates]");
+        }
+        String shape = parts[0].trim().toLowerCase(Locale.ROOT);
+        if (!shape.equals("circle") && !shape.equals("rect")) {
+            throw new IllegalArgumentException("Geofence shape must be circle or rect, but found " + parts[0]);
+        }
+        boolean circle = shape.equals("circle");
+        String action = parts[1].trim().toLowerCase(Locale.ROOT);
+
+        ByteBuf body = Unpooled.buffer();
+
+        if (action.equals("delete")) {
+            if (parts[2].trim().equalsIgnoreCase("all")) {
+                body.writeByte(0); // zero areas means delete every area of this shape
+            } else {
+                body.writeByte(1);
+                body.writeInt((int) parseNumber(parts[2].trim()));
+            }
+            return TrackonobdProtocolDecoder.formatMessage(
+                    circle ? TrackonobdProtocolDecoder.MSG_DELETE_CIRCULAR_AREA
+                            : TrackonobdProtocolDecoder.MSG_DELETE_SQUARE_AREA, id, 0, body);
+        }
+        if (!action.equals("add")) {
+            body.release();
+            throw new IllegalArgumentException("Geofence action must be add or delete, but found " + parts[1]);
+        }
+        int expected = circle ? 6 : 7;
+        if (parts.length < expected) {
+            body.release();
+            throw new IllegalArgumentException(circle
+                    ? "Expected geofence=circle,add,<id>,<lat>,<lon>,<radius>"
+                    : "Expected geofence=rect,add,<id>,<lat1>,<lon1>,<lat2>,<lon2>");
+        }
+
+        double latitude = Double.parseDouble(parts[3].trim());
+        double longitude = Double.parseDouble(parts[4].trim());
+
+        // table 57: report entering and leaving to the platform, no time window and no speed limit,
+        // so the optional trailing time and speed fields are omitted
+        int properties = (1 << 3) | (1 << 5);
+        if (latitude < 0) {
+            properties |= 1 << 6;
+        }
+        if (longitude < 0) {
+            properties |= 1 << 7;
+        }
+
+        double secondLatitude = 0;
+        double secondLongitude = 0;
+        if (!circle) {
+            secondLatitude = Double.parseDouble(parts[5].trim());
+            secondLongitude = Double.parseDouble(parts[6].trim());
+            if (secondLatitude < 0) {
+                properties |= 1 << 9;
+            }
+            if (secondLongitude < 0) {
+                properties |= 1 << 10;
+            }
+        }
+
+        body.writeByte(1); // add
+        body.writeByte(1); // a single area per message
+        body.writeInt((int) parseNumber(parts[2].trim()));
+        body.writeShort(properties);
+        body.writeInt(coordinate(latitude));
+        body.writeInt(coordinate(longitude));
+        if (circle) {
+            body.writeInt((int) parseNumber(parts[5].trim())); // radius in metres
+        } else {
+            body.writeInt(coordinate(secondLatitude));
+            body.writeInt(coordinate(secondLongitude));
+        }
+
+        return TrackonobdProtocolDecoder.formatMessage(
+                circle ? TrackonobdProtocolDecoder.MSG_SET_CIRCULAR_AREA
+                        : TrackonobdProtocolDecoder.MSG_SET_SQUARE_AREA, id, 0, body);
+    }
+
+    /**
+     * Coordinates travel as unsigned millionths of a degree; the hemisphere lives in the geofence
+     * properties word rather than in the sign.
+     */
+    private int coordinate(double value) {
+        return (int) Math.round(Math.abs(value) * 1000000);
+    }
+
+    /**
+     * Section 9.13.3: delivering CAN learning results, subcategory 0x02 of the 0xF1 downlink.
+     */
+    private ByteBuf canLearning(Command command, ByteBuf id, String hex) {
+        String compact = hex.replaceAll("\\s", "");
+        if (!compact.matches("(?i)[0-9a-f]+") || compact.length() % 2 != 0) {
+            throw new IllegalArgumentException("CAN learning payload must be an even length hex string");
+        }
+        byte[] payload = DataConverter.parseHex(compact);
+        ByteBuf body = Unpooled.buffer();
+        body.writeByte(TrackonobdProtocolDecoder.TRANSPARENT_VEHICLE_CONTROL);
+        writeBcdTime(body, command.getDeviceId());
+        body.writeByte(0); // reserved
+        body.writeByte(TrackonobdProtocolDecoder.VEHICLE_TYPE_COMMERCIAL);
+        body.writeByte(0x02); // subcategory: distribute CAN learning result
+        body.writeByte(1); // total packets
+        body.writeByte(1); // current packet
+        body.writeShort(payload.length);
+        body.writeBytes(payload);
+        return TrackonobdProtocolDecoder.formatMessage(
+                TrackonobdProtocolDecoder.MSG_TRANSPARENT_DOWNLINK, id, 0, body);
+    }
+
+    private long parseNumber(String value) {
+        try {
+            return value.startsWith("0x") || value.startsWith("0X")
+                    ? Long.parseLong(value.substring(2), 16)
+                    : Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Expected a number but found " + value);
+        }
+    }
+
     private int parseParameterId(String name) {
         String value = name.startsWith("0x") || name.startsWith("0X") ? name.substring(2) : name;
         try {
@@ -206,10 +358,8 @@ public class TrackonobdProtocolEncoder extends BaseProtocolEncoder {
         int length = width != null ? width : parameterWidth(parameterId);
         long number;
         try {
-            number = value.startsWith("0x") || value.startsWith("0X")
-                    ? Long.parseLong(value.substring(2), 16)
-                    : Long.parseLong(value);
-        } catch (NumberFormatException e) {
+            number = parseNumber(value);
+        } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException("Parameter " + String.format("%04X", parameterId)
                     + " expects a number but found " + value);
         }

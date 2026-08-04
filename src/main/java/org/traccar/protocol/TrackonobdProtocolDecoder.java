@@ -71,6 +71,10 @@ public class TrackonobdProtocolDecoder extends BaseProtocolDecoder {
     public static final int MSG_TERMINAL_CONTROL = 0x8105;
     public static final int MSG_QUERY_PARAMETERS = 0x8106;
     public static final int MSG_SEND_TEXT_MESSAGE = 0x8300;
+    public static final int MSG_SET_CIRCULAR_AREA = 0x8600;
+    public static final int MSG_DELETE_CIRCULAR_AREA = 0x8601;
+    public static final int MSG_SET_SQUARE_AREA = 0x8602;
+    public static final int MSG_DELETE_SQUARE_AREA = 0x8603;
     public static final int MSG_TRANSPARENT_DOWNLINK = 0x8900;
 
     public static final int TRANSPARENT_VEHICLE_DATA = 0xF0;
