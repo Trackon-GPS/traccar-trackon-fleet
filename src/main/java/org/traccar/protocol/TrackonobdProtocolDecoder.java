@@ -205,6 +205,14 @@ public class TrackonobdProtocolDecoder extends BaseProtocolDecoder {
         }
     }
 
+    /**
+     * Fixed width string fields are padded with nulls rather than spaces.
+     */
+    private String readTrimmed(ByteBuf buf, int length) {
+        return buf.readCharSequence(length, StandardCharsets.US_ASCII)
+                .toString().replace("\0", "").trim();
+    }
+
     private Position emptyPosition(DeviceSession deviceSession) {
         Position position = new Position(getProtocolName());
         position.setDeviceId(deviceSession.getDeviceId());
@@ -232,16 +240,26 @@ public class TrackonobdProtocolDecoder extends BaseProtocolDecoder {
 
         Position position = emptyPosition(deviceSession);
 
-        buf.readUnsignedShort(); // manufacturer
-        buf.readUnsignedShort(); // authentication level
-        buf.skipBytes(5); // device type
-        String iccid = buf.readCharSequence(20, StandardCharsets.US_ASCII).toString().trim();
-        if (!iccid.isEmpty()) {
-            position.set(Position.KEY_ICCID, iccid.replace("\0", ""));
+        buf.readUnsignedShort(); // manufacturer id, the province id in plain JT/T 808-2013
+        buf.readUnsignedShort(); // authentication level, the city id in plain JT/T 808-2013
+        String manufacturer = readTrimmed(buf, 5);
+        if (!manufacturer.isEmpty()) {
+            position.set("manufacturer", manufacturer);
         }
+
+        // Table 8 labels this the SIM ICCID, but devices that follow plain JT/T 808-2013 place the
+        // terminal model at the same offset, so the field is classified by its content: an ICCID is
+        // 19 or 20 digits, whereas a model is a short alphanumeric string such as "V521H".
+        String descriptor = readTrimmed(buf, 20);
+        if (descriptor.matches("\\d{18,20}")) {
+            position.set(Position.KEY_ICCID, descriptor);
+        } else if (!descriptor.isEmpty()) {
+            position.set("model", descriptor);
+        }
+
         buf.skipBytes(7); // terminal serial number
         int plateColour = buf.readUnsignedByte();
-        String identification = buf.readCharSequence(buf.readableBytes(), StandardCharsets.US_ASCII).toString().trim();
+        String identification = readTrimmed(buf, buf.readableBytes());
         if (!identification.isEmpty()) {
             // section 9.3: with no license plate the field carries the VIN instead
             position.set(plateColour == 0 ? Position.KEY_VIN : "plateNumber", identification);

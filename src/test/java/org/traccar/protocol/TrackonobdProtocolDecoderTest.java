@@ -176,18 +176,34 @@ public class TrackonobdProtocolDecoderTest extends ProtocolTest {
 
     }
 
+    /**
+     * Table 8 labels offset 9 as the SIM ICCID, but a V521H in the field reports its terminal model
+     * there, matching plain JT/T 808-2013. The field is classified by content rather than position.
+     */
     @Test
     public void testDecodeRegister() throws Exception {
 
         var decoder = inject(new TrackonobdProtocolDecoder(null));
 
         verifyAttribute(decoder, binary(
-                "7e010000360b3a73ce2ff200014a4d00013937353539383938363030303030303030303030303030303130303030303037004c56534843414d423041585858585858584a7e"),
+                "7e010000360b3a73ce2ff200014a4d00014a494d4900563532314800000000000000000000000000000030303030303037004c56534843414d423041585858585858585c7e"),
+                "model", "V521H");
+
+        verifyAttribute(decoder, binary(
+                "7e010000360b3a73ce2ff200014a4d00014a494d4900563532314800000000000000000000000000000030303030303037004c56534843414d423041585858585858585c7e"),
                 Position.KEY_VIN, "LVSHCAMB0AXXXXXXX");
 
         verifyAttribute(decoder, binary(
-                "7e010000360b3a73ce2ff200014a4d00013937353539383938363030303030303030303030303030303130303030303037004c56534843414d423041585858585858584a7e"),
+                "7e010000360b3a73ce2ff200014a4d00014a494d4900563532314800000000000000000000000000000030303030303037004c56534843414d423041585858585858585c7e"),
+                "manufacturer", "JIMI");
+
+        verifyAttribute(decoder, binary(
+                "7e0100002f0b3a73ce2ff200014a4d00014a494d49003839383630303030303030303030303030303031303030303030370142413243484131323334387e"),
                 Position.KEY_ICCID, "89860000000000000001");
+
+        verifyAttribute(decoder, binary(
+                "7e0100002f0b3a73ce2ff200014a4d00014a494d49003839383630303030303030303030303030303031303030303030370142413243484131323334387e"),
+                "plateNumber", "BA2CHA1234");
 
     }
 
