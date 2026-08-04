@@ -183,9 +183,12 @@ public class TrackonobdProtocolDecoder extends BaseProtocolDecoder {
             case MSG_HEARTBEAT:
             case MSG_TERMINAL_AUTH:
             case MSG_TERMINAL_LOGOUT:
-            case MSG_TERMINAL_GENERAL_RESPONSE:
                 sendGeneralResponse(channel, remoteAddress, id, type, index);
                 return null;
+            case MSG_TERMINAL_GENERAL_RESPONSE:
+                // section 7.1: this message is itself the reply to a platform message, so
+                // acknowledging it would answer an answer
+                return decodeGeneralResponse(deviceSession, body);
             case MSG_UPGRADE_RESULT:
                 sendGeneralResponse(channel, remoteAddress, id, type, index);
                 return decodeUpgradeResult(deviceSession, body);
@@ -267,6 +270,31 @@ public class TrackonobdProtocolDecoder extends BaseProtocolDecoder {
             position.set(plateColour == 0 ? Position.KEY_VIN : "plateNumber", identification);
         }
 
+        return position;
+    }
+
+    /**
+     * Table 6: the terminal's answer to a platform message, surfaced so that the outcome of a
+     * command is visible rather than silently dropped.
+     */
+    private Position decodeGeneralResponse(DeviceSession deviceSession, ByteBuf buf) {
+        if (buf.readableBytes() < 5) {
+            return null;
+        }
+        Position position = emptyPosition(deviceSession);
+        buf.readUnsignedShort(); // response sequence number
+        int responseType = buf.readUnsignedShort();
+        int result = buf.readUnsignedByte();
+        String description = switch (result) {
+            case 0 -> "success";
+            case 1 -> "failure";
+            case 2 -> "message error";
+            case 3 -> "not supported";
+            case 4 -> "key exchange succeeded";
+            case 5 -> "key exchange failed";
+            default -> "result " + result;
+        };
+        position.set(Position.KEY_RESULT, String.format("%04X: %s", responseType, description));
         return position;
     }
 

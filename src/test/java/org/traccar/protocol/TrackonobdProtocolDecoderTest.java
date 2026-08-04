@@ -218,6 +218,25 @@ public class TrackonobdProtocolDecoderTest extends ProtocolTest {
 
     }
 
+    /**
+     * Captured from a V521H acknowledging an 0x8900 online command.
+     */
+    @Test
+    public void testDecodeGeneralResponse() throws Exception {
+
+        var decoder = inject(new TrackonobdProtocolDecoder(null));
+
+        verifyAttribute(decoder, binary(
+                "7e000100054e911399858f00f900008900002b7e"),
+                Position.KEY_RESULT, "8900: success");
+
+        // a terminal that does not implement the message answers with result 3
+        verifyAttribute(decoder, binary(
+                "7e000100054e911399858f00f90000890003287e"),
+                Position.KEY_RESULT, "8900: not supported");
+
+    }
+
     @Test
     public void testDecodeHeartbeat() throws Exception {
 
