@@ -251,6 +251,7 @@ import org.traccar.protocol.TotemProtocol;
 import org.traccar.protocol.Tr20Protocol;
 import org.traccar.protocol.Tr900Protocol;
 import org.traccar.protocol.TrackboxProtocol;
+import org.traccar.protocol.TrackonobdProtocol;
 import org.traccar.protocol.TrakMateProtocol;
 import org.traccar.protocol.TramigoProtocol;
 import org.traccar.protocol.TranSyncProtocol;
@@ -562,6 +563,7 @@ public class PortConfigSuffix extends ConfigSuffix<Integer> {
         put(RadshidProtocol.class, 5265);
         put(R16hProtocol.class, 5266);
         put(JimiPhotoProtocol.class, 5267);
+        put(TrackonobdProtocol.class, 5268);
     }
 
     PortConfigSuffix(String key, List<KeyType> types) {
