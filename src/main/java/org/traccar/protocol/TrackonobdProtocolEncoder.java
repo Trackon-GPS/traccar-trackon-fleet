@@ -29,6 +29,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 import java.util.Set;
 import java.util.TimeZone;
 
@@ -77,7 +78,7 @@ public class TrackonobdProtocolEncoder extends BaseProtocolEncoder {
         ByteBuf id = TrackonobdProtocolDecoder.encodeId(getUniqueId(command.getDeviceId()));
         try {
             return switch (command.getType()) {
-                case Command.TYPE_CUSTOM -> customFrame(command);
+                case Command.TYPE_CUSTOM -> customFrame(command, id);
                 case Command.TYPE_CONFIGURATION -> configuration(command, id);
                 case Command.TYPE_ENGINE_STOP -> vehicleControl(command, id, CONTROL_IGNITION_OFF);
                 case Command.TYPE_ENGINE_RESUME -> vehicleControl(command, id, CONTROL_IGNITION_ON);
@@ -98,18 +99,42 @@ public class TrackonobdProtocolEncoder extends BaseProtocolEncoder {
     }
 
     /**
-     * A custom command is a complete pre-built frame, delimiters and check byte included, passed
-     * through untouched apart from the escaping applied by the frame encoder.
+     * A custom command is either a complete pre-built frame given as hex, recognised by the leading
+     * and trailing 0x7e identifiers and passed through untouched apart from the escaping applied by
+     * the frame encoder, or an ASCII command such as {@code GMT#}.
+     *
+     * <p>The ASCII form is carried by downlink transparent transmission 0x8900 with transparent
+     * type 0xF0. This document does not define an ASCII command channel; the framing follows what
+     * {@link Jt808ProtocolEncoder} already sends to Jimi JC series terminals, which share this
+     * manufacturer's command set.
      */
-    private ByteBuf customFrame(Command command) {
+    private ByteBuf customFrame(Command command, ByteBuf id) {
+
         String data = command.getString(Command.KEY_DATA);
-        if (data == null || !data.matches("(?i)[0-9a-f\\s]+") || data.replaceAll("\\s", "").length() % 2 != 0) {
+        if (data == null || data.isBlank()) {
             throw new IllegalArgumentException(
-                    "Custom command data must be an even length hex string containing a whole frame. "
-                            + "To change device parameters use the configuration command instead, "
-                            + "for example F00E=30,F00F=1");
+                    "Custom command requires data: either an ASCII command such as GMT# "
+                            + "or a whole frame in hex beginning and ending with 7e");
         }
-        return Unpooled.wrappedBuffer(DataConverter.parseHex(data.replaceAll("\\s", "")));
+        data = data.trim();
+
+        String compact = data.replaceAll("\\s", "");
+        boolean frame = compact.length() >= 4
+                && compact.toLowerCase(Locale.ROOT).startsWith("7e")
+                && compact.toLowerCase(Locale.ROOT).endsWith("7e")
+                && compact.matches("(?i)[0-9a-f]+");
+        if (frame) {
+            if (compact.length() % 2 != 0) {
+                throw new IllegalArgumentException("Hex frame must have an even number of characters");
+            }
+            return Unpooled.wrappedBuffer(DataConverter.parseHex(compact));
+        }
+
+        ByteBuf body = Unpooled.buffer();
+        body.writeByte(TrackonobdProtocolDecoder.TRANSPARENT_ONLINE_COMMAND);
+        body.writeCharSequence(data, StandardCharsets.US_ASCII);
+        return TrackonobdProtocolDecoder.formatMessage(
+                TrackonobdProtocolDecoder.MSG_TRANSPARENT_DOWNLINK, id, 0, body);
     }
 
     /**

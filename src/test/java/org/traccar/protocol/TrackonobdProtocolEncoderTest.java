@@ -81,6 +81,30 @@ public class TrackonobdProtocolEncoderTest extends ProtocolTest {
 
     }
 
+    /**
+     * An ASCII custom command travels as an online command, and a hex frame passes through whole.
+     */
+    @Test
+    public void testEncodeCustom() throws Exception {
+
+        var encoder = inject(new TrackonobdProtocolEncoder(null));
+
+        Command command = new Command();
+        command.setDeviceId(1);
+        command.setType(Command.TYPE_CUSTOM);
+
+        command.set(Command.KEY_DATA, "GMT#");
+        verifyCommand(encoder, command, binary("7e890000050b3a73ce2ff20000f0474d5423507e"));
+
+        command.set(Command.KEY_DATA, "STATUS#");
+        verifyCommand(encoder, command, binary("7e890000080b3a73ce2ff20000f053544154555323177e"));
+
+        // a whole frame in hex is recognised by its identifiers and forwarded untouched
+        command.set(Command.KEY_DATA, "7e000200000b3a73ce2ff20001527e");
+        verifyCommand(encoder, command, binary("7e000200000b3a73ce2ff20001527e"));
+
+    }
+
     @Test
     public void testRejectsMalformedInput() throws Exception {
 
@@ -89,11 +113,6 @@ public class TrackonobdProtocolEncoderTest extends ProtocolTest {
 
         Command command = new Command();
         command.setDeviceId(1);
-
-        // the failure that a plain text custom command used to produce as a hex decoder exception
-        command.setType(Command.TYPE_CUSTOM);
-        command.set(Command.KEY_DATA, "GPRSSET");
-        assertThrows(IllegalArgumentException.class, () -> encodeCommand(encoder, decoder, command));
 
         command.setType(Command.TYPE_CONFIGURATION);
         command.set(Command.KEY_DATA, "F00E");

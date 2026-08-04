@@ -76,6 +76,8 @@ public class TrackonobdProtocolDecoder extends BaseProtocolDecoder {
     public static final int TRANSPARENT_VEHICLE_DATA = 0xF0;
     public static final int TRANSPARENT_VEHICLE_CONTROL = 0xF1;
     public static final int TRANSPARENT_PERIPHERAL_DATA = 0xF3;
+    /** Undocumented here, but the ASCII command channel Jimi terminals accept downlink. */
+    public static final int TRANSPARENT_ONLINE_COMMAND = 0xF0;
 
     public static final int VEHICLE_TYPE_COMMERCIAL = 0x01;
     public static final int VEHICLE_TYPE_PASSENGER = 0x02;
