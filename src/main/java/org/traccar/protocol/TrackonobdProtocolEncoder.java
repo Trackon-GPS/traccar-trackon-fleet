@@ -434,7 +434,7 @@ public class TrackonobdProtocolEncoder extends BaseProtocolEncoder {
 
     private void writeBcdTime(ByteBuf data, long deviceId) {
         String zoneName = AttributeUtil.lookup(getCacheManager(), Keys.DECODER_TIMEZONE, deviceId);
-        ZoneId zone = TimeZone.getTimeZone(zoneName != null ? zoneName : "GMT+8").toZoneId();
+        ZoneId zone = TimeZone.getTimeZone(zoneName != null ? zoneName : "UTC").toZoneId();
         data.writeBytes(DataConverter.parseHex(
                 DateTimeFormatter.ofPattern("yyMMddHHmmss").withZone(zone).format(Instant.now())));
     }

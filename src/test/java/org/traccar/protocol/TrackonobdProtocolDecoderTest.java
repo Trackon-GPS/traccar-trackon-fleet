@@ -247,4 +247,71 @@ public class TrackonobdProtocolDecoderTest extends ProtocolTest {
 
     }
 
+    /**
+     * Parameter 0xF014 defines the terminal clock as UTC, so the BCD time 26-08-04 10:30:00 must
+     * decode as 10:30 UTC rather than being shifted by the JT808 Beijing default of GMT+8.
+     */
+    @Test
+    public void testDecodeTimeIsUtc() throws Exception {
+
+        var decoder = inject(new TrackonobdProtocolDecoder(null));
+
+        verifyPosition(decoder, binary(
+                "7e0200002b0b3a73ce2ff20001000000000000000301a6ae210515f0b8057801c8005a26080410300030011831010ce4070104019f03049f1b7e"),
+                position("2026-08-04 10:30:00.000", true, 27.700769, 85.32396));
+
+    }
+
+    /**
+     * Table 30: a re-uploaded message (data type 0x01) ends with a transmission time that is not
+     * part of the subcategory payload, so it must not leak into fields that read to the end.
+     */
+    @Test
+    public void testDecodeReuploadTrailingTime() throws Exception {
+
+        var decoder = inject(new TrackonobdProtocolDecoder(null));
+
+        verifyAttribute(decoder, binary(
+                "7e090000170b3a73ce2ff20001f0260804103000010105000100014c4f47260804103500fa7e"),
+                "logContent", "LOG");
+
+        verifyAttribute(decoder, binary(
+                "7e090000170b3a73ce2ff20001f0260804103000010105000100014c4f47260804103500fa7e"),
+                "transmissionTime", "2026-08-04T10:35:00Z");
+
+    }
+
+    /**
+     * Table 20 bits 18 to 21 name the satellite systems in use, and bit 4 flags the vehicle as
+     * out of operation.
+     */
+    @Test
+    public void testDecodeStatusSatellites() throws Exception {
+
+        var decoder = inject(new TrackonobdProtocolDecoder(null));
+
+        verifyAttribute(decoder, binary(
+                "7e0200001c0b3a73ce2ff2000100000000000c000301a6ae210515f0b8057801c8005a260804103000d57e"),
+                "gnssSystems", "GPS,BeiDou");
+
+        verifyAttribute(decoder, binary(
+                "7e0200001c0b3a73ce2ff2000100000000000c000301a6ae210515f0b8057801c8005a260804103000d57e"),
+                "inOperation", true);
+
+    }
+
+    /**
+     * Table 19 bit 22: driving mileage outside the configured range.
+     */
+    @Test
+    public void testDecodeAlarmDrivingMileage() throws Exception {
+
+        var decoder = inject(new TrackonobdProtocolDecoder(null));
+
+        verifyAttribute(decoder, binary(
+                "7e0200001c0b3a73ce2ff20001004000000000000301a6ae210515f0b8057801c8005a260804103000997e"),
+                Position.KEY_ALARM, Position.ALARM_GENERAL);
+
+    }
+
 }

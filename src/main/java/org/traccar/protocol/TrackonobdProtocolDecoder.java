@@ -178,7 +178,9 @@ public class TrackonobdProtocolDecoder extends BaseProtocolDecoder {
         }
 
         if (!deviceSession.contains(DeviceSession.KEY_TIMEZONE)) {
-            deviceSession.set(DeviceSession.KEY_TIMEZONE, getTimeZone(deviceSession.getDeviceId(), "GMT+8"));
+            // parameter 0xF014 defines the terminal clock as UTC, so every BCD timestamp is UTC unless
+            // the device is configured otherwise through decoder.timezone
+            deviceSession.set(DeviceSession.KEY_TIMEZONE, getTimeZone(deviceSession.getDeviceId(), "UTC"));
         }
 
         switch (type) {
@@ -364,8 +366,8 @@ public class TrackonobdProtocolDecoder extends BaseProtocolDecoder {
         if (BitUtil.check(value, 2) || BitUtil.check(value, 14) || BitUtil.check(value, 18)) {
             position.addAlarm(Position.ALARM_FATIGUE_DRIVING);
         }
-        if (BitUtil.check(value, 3)) {
-            position.addAlarm(Position.ALARM_GENERAL);
+        if (BitUtil.check(value, 3) || BitUtil.check(value, 22)) {
+            position.addAlarm(Position.ALARM_GENERAL); // danger alert, driving mileage out of range
         }
         if (BitUtil.check(value, 4) || BitUtil.check(value, 9) || BitUtil.check(value, 10)
                 || BitUtil.check(value, 11) || BitUtil.check(value, 12) || BitUtil.check(value, 24)) {
@@ -411,6 +413,7 @@ public class TrackonobdProtocolDecoder extends BaseProtocolDecoder {
      */
     private void decodeStatus(Position position, long status) {
         position.set(Position.KEY_IGNITION, BitUtil.check(status, 0));
+        position.set("inOperation", !BitUtil.check(status, 4));
         position.set("loadStatus", (int) BitUtil.between(status, 8, 10));
         position.set(Position.KEY_BLOCKED, BitUtil.check(status, 10));
         position.set("circuitDisconnected", BitUtil.check(status, 11));
@@ -419,6 +422,22 @@ public class TrackonobdProtocolDecoder extends BaseProtocolDecoder {
         position.set("positioningType", (int) BitUtil.between(status, 29, 31));
         if (BitUtil.check(status, 31)) {
             position.set(Position.KEY_ARCHIVE, true);
+        }
+        List<String> systems = new ArrayList<>();
+        if (BitUtil.check(status, 18)) {
+            systems.add("GPS");
+        }
+        if (BitUtil.check(status, 19)) {
+            systems.add("BeiDou");
+        }
+        if (BitUtil.check(status, 20)) {
+            systems.add("GLONASS");
+        }
+        if (BitUtil.check(status, 21)) {
+            systems.add("Galileo");
+        }
+        if (!systems.isEmpty()) {
+            position.set("gnssSystems", String.join(",", systems));
         }
     }
 
@@ -609,7 +628,15 @@ public class TrackonobdProtocolDecoder extends BaseProtocolDecoder {
         position.setDeviceId(deviceSession.getDeviceId());
         getLastLocation(position, readDate(buf, timeZone));
 
-        position.set("dataType", buf.readUnsignedByte());
+        int dataType = buf.readUnsignedByte();
+        position.set("dataType", dataType);
+        if (dataType == 0x01 && buf.readableBytes() >= 6) {
+            // table 30: re-uploaded data ends with the transmission time, which is not part of the
+            // subcategory payload and would otherwise be swallowed by decoders that read to the end
+            ByteBuf trailer = buf.slice(buf.writerIndex() - 6, 6);
+            position.set("transmissionTime", readDate(trailer, timeZone).toInstant().toString());
+            buf.writerIndex(buf.writerIndex() - 6);
+        }
         int vehicleType = buf.readUnsignedByte();
         int subcategory = buf.readUnsignedByte();
 
